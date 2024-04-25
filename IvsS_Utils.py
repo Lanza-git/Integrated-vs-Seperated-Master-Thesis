@@ -1,26 +1,34 @@
-# General Imports
-import os
-import pandas as pd
+# Data manipulation libraries
 import numpy as np
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.impute import SimpleImputer
+import pandas as pd
+
+# Scikit-learn libraries for data preprocessing
 from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import GridSearchCV, train_test_split
-import pandas as pd
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+# Scikit-learn libraries for model selection and evaluation
 from sklearn.metrics import mean_squared_error
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
-from scikeras.wrappers import KerasRegressor
-from sklearn.model_selection import RandomizedSearchCV
-from tensorflow.keras.optimizers import Adam
-from scipy.stats import reciprocal
-import numpy as np
-import lightgbm as lgb
-from scipy.stats import norm
-from gurobipy import GRB
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, train_test_split
+
+# Scikit-learn library for pipeline creation
+from sklearn.pipeline import Pipeline
+
+# TensorFlow and Keras libraries for model creation and training
 from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.optimizers import Adam
+import tensorflow as tf
+
+# Scikit-learn wrapper for Keras
+from scikeras.wrappers import KerasRegressor
+
+# SciPy library for statistical functions
+from scipy.stats import reciprocal
+
+# pulp for mathematical optimization
+from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary, LpStatus
 
 ######################## Data Handling Functions ############################################################
 
@@ -130,13 +138,16 @@ def nvps_profit(demand, q, alpha, u, o):
     profits: np.array
         Profits by period, shape (T,1)
     """
-
-    q = np.maximum(0., q) # make sure orders are non-negative
-    demand_s = demand + np.matmul(np.maximum(demand-q, 0.), alpha) # demand including substitutions
-    profits = np.matmul(q, u.T) - np.matmul(np.maximum(q-demand_s, 0.), (u+o).T) # period-wise profit (T x 1)
+    if demand.shape[1] == 1:
+        q = np.maximum(0., q)
+        profits = np.maximum(q-demand, 0.)*u - np.maximum(demand-q, 0.)*(u+o)
+    else:
+        q = np.maximum(0., q) # make sure orders are non-negative
+        demand_s = demand + np.matmul(np.maximum(demand-q, 0.), alpha) # demand including substitutions
+        profits = np.matmul(q, u.T) - np.matmul(np.maximum(q-demand_s, 0.), (u+o).T) # period-wise profit (T x 1)
     return profits
 
-def solve_MILP(d, alpha, u, o, n_prods, n_threads=1):
+def solve_MILP(d, alpha, u, o):
 
     """ helper function that solves the mixed-integer linear program (MILP) of the multi-product newsvendor problem under substitution (cf. slides)
     
@@ -152,18 +163,16 @@ def solve_MILP(d, alpha, u, o, n_prods, n_threads=1):
         overage costs, shape (1, N_PRODUCTS)
     n_prods : int
         number of products
-    n_threads : int
-        number of threads
 
     Returns
     ----------
     orders: np.array
         Optimal orders, of shape (1, N_PRODUCTS)
     model.status : int
-        Gurobi status code (see https://www.gurobi.com/documentation/current/refman/optimization_status_codes.html)
+       
     """
 
-
+    n_prods = d.shape[1] # number of products
 
     hist = d.shape[0] # number of demand samples 
 
@@ -172,38 +181,31 @@ def solve_MILP(d, alpha, u, o, n_prods, n_threads=1):
     d_max = d + np.matmul(d, alpha)
     M = np.array(np.max(d_max, axis=0)[0]-d_min)
 
-    # intialize model, disable console logging and set number of threads
-    model = gp.Model()
-    model.Params.LogToConsole = 0
-    model.Params.Threads = n_threads
+    # initialize model
+    model = LpProblem("My Model", LpMaximize)
 
     # initialize model variables
-    z = model.addVars(hist, n_prods, vtype=GRB.BINARY)
-    q = model.addVars(n_prods)
-    y = model.addVars(hist, n_prods)
-    v = model.addVars(hist, n_prods)
+    z = [[LpVariable(f'z_{t}_{i}', cat='Binary') for i in range(n_prods)] for t in range(hist)]
+    q = [LpVariable(f'q_{i}') for i in range(n_prods)]
+    y = [[LpVariable(f'y_{t}_{i}') for i in range(n_prods)] for t in range(hist)]
+    v = [[LpVariable(f'v_{t}_{i}') for i in range(n_prods)] for t in range(hist)]
 
     # objective function
-    obj = gp.LinExpr()
-    for i in range(n_prods):
-        obj += u[0, i].item()*q[i]
-        for t in range(hist):
-            obj -= (u[0, i].item()+o[0, i].item()) / hist * y[t, i]
-    model.setObjective(obj, GRB.MAXIMIZE)
+    model += lpSum(u[0, i].item()*q[i] - (u[0, i].item()+o[0, i].item()) / hist * y[t][i] for i in range(n_prods) for t in range(hist))
 
     # constraints
     for i in range(n_prods):
         for t in range(hist):
-            model.addConstr(y[t, i]>=q[i]-d[t, i].item()-gp.quicksum(alpha[j, i]*v[t, j] for j in range(n_prods)))
-            model.addConstr(v[t, i]<=d[t, i].item()-q[i]+M[i]*z[t, i])
-            model.addConstr(v[t, i]>=d[t, i].item()-q[i]-M[i]*z[t, i])
-            model.addConstr(v[t, i]<=d[t, i].item()*(1-z[t, i]))
+            model += y[t][i] >= q[i] - d[t, i].item() - lpSum(alpha[j, i]*v[t][j] for j in range(n_prods))
+            model += v[t][i] <= d[t, i].item() - q[i] + M[i]*z[t][i]
+            model += v[t][i] >= d[t, i].item() - q[i] - M[i]*z[t][i]
+            model += v[t][i] <= d[t, i].item() * (1 - z[t][i])
 
     # solve and retrieve solution
-    model.optimize()
-    orders = np.array([[q[p].x for p in range(n_prods)]])
+    model.solve()
+    orders = np.array([[q[p].varValue for p in range(n_prods)]])
 
-    return orders, model.status
+    return orders, LpStatus[model.status]
 
 ######################### Neural Network Functions ######################################################################
 
@@ -232,6 +234,19 @@ def make_nvps_loss(alpha, underage, overage):
     
     return nvps_loss
 
+def make_nvp_loss(underage, overage):
+
+    """ Create a custom loss function for the newsvendor problem without substitution"""
+
+    q = underage / (underage + overage)
+
+    @tf.autograph.experimental.do_not_convert
+    def nvp_loss(y_true, y_pred):
+        error = y_true - y_pred
+        return tf.keras.backend.mean(tf.maximum(q*error, (q-1)*error), axis=-1)
+    
+    return nvp_loss
+
 def create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed=42): 
         
         """ Build a neural network model with the specified architecture and hyperparameters """
@@ -251,7 +266,7 @@ def create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate,
 
         return model
 
-def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, patience, verbose=0, seed=42):
+def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, patience, integrated=True, verbose=0, seed=42):
 
     """ Train a network on the given training data with hyperparameter tuning
     
@@ -288,14 +303,19 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, pati
         Mean profit on the validation set
     """
 
-    # construct NVPS loss
-    nvps_loss = make_nvps_loss(alpha, underage, overage)
+    # construct loss function based on the number of products
+    if integrated == False:
+        loss = tf.keras.losses.MeanSquaredError()
+    elif (y_train.shape[1] == 1) & (integrated == True):
+        loss = make_nvp_loss(underage, overage)
+    elif (y_train.shape[1] > 1) & (integrated == True): 
+        loss = make_nvps_loss(alpha, underage, overage)
 
     # create a neural network model with basic hyperparameters
     early_stopping = EarlyStopping(monitor='val_loss', patience=patience)
     model_ANN = KerasRegressor(build_fn=create_NN_model, n_hidden=1,n_neurons=30, activation = 'relu',
                                input_shape=X_train.shape[1], learning_rate=0.01, 
-                               loss=nvps_loss, output_shape=y_train.shape[1], seed = seed, verbose=verbose, 
+                               loss=loss, output_shape=y_train.shape[1], seed = seed, verbose=verbose, 
                                callbacks=[early_stopping])
     
     # define the hyperparameters space
@@ -320,11 +340,12 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, pati
     q_val = best_estimator.predict(X_val).numpy()
     val_profit = np.mean(nvps_profit(y_val, q_val, alpha, underage, overage))
 
-    hyperparameter = [best_params['n_hidden'], best_params['n_neurons'],best_params['learning_rate'], best_params['epochs'], patience, best_params['batch_size'], best_params['activation']]
+    hyperparameter = [best_params['n_hidden'], best_params['n_neurons'],best_params['learning_rate'], 
+                      best_params['epochs'], patience, best_params['batch_size'], best_params['activation']]
 
     return best_estimator, hyperparameter, val_profit
 
-def train_net(hp, X_train, y_train, X_val, y_val, alpha, u, o, verbose=0, seed=42):
+def train_net(hp, X_train, y_train, X_val, y_val, alpha, underage, overage, integrated=True, verbose=0, seed=42):
 
     """ Train a network on the given training data with early stopping.
     
@@ -357,21 +378,24 @@ def train_net(hp, X_train, y_train, X_val, y_val, alpha, u, o, verbose=0, seed=4
         Final model
     """
 
-    # construct NVPS loss
-    nvps_loss = make_nvps_loss(alpha, u, o)
+    # construct loss function based on the number of products
+    if integrated == False:
+        loss = tf.keras.losses.MeanSquaredError()
+    elif (y_train.shape[1] == 1) & (integrated == True):
+        loss = make_nvp_loss(underage, overage)
+    elif (y_train.shape[1] > 1) & (integrated == True): 
+        loss = make_nvps_loss(alpha, underage, overage)
 
     # extract hyperparameters, build and compile MLP
     hidden_nodes, n_neurons, lr, max_epochs, patience, batch_size, activation = hp
-    mlp = create_NN_model(n_hidden=hidden_nodes, n_neurons=n_neurons, activation=activation, input_shape=X_train.shape[1], learning_rate=lr, loss=nvps_loss, output_shape=y_train.shape[1], seed=seed)
+    mlp = create_NN_model(n_hidden=hidden_nodes, n_neurons=n_neurons, activation=activation, 
+                          input_shape=X_train.shape[1], learning_rate=lr, loss=loss, 
+                          output_shape=y_train.shape[1], seed=seed)
 
     # train MLP with early stopping
     callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=patience, restore_best_weights=True)
     mlp.fit(X_train, y_train, epochs=max_epochs, batch_size=batch_size, validation_data=(X_val, y_val),
             verbose=verbose, callbacks=[callback])
-    
-    # make predictions on validation set and compute profits
-    q_val = mlp(X_val).numpy()
-    val_profit = np.mean(nvps_profit(y_val, q_val, alpha, u, o))
     
     return mlp
 
