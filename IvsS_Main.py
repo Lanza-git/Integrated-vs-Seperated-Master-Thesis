@@ -1,9 +1,20 @@
-import os
+# General imports
+import subprocess
+import sys
+
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+install('pandas')
+install('scikit-learn')
+install('tensorflow')
+install('scikeras')
+install('lightgbm')
+install('scipy')
+install('numpy')
+
+
 import pandas as pd
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.impute import SimpleImputer
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
 from sklearn.metrics import mean_squared_error
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense
@@ -15,58 +26,9 @@ import numpy as np
 import lightgbm as lgb
 from scipy.stats import norm
 
+#####################################################################################################################
 
 
-def load_data(multi=False):
-    # Get Path to Data
-    folder_path = os.path.join(os.path.dirname(os.getcwd()), 'Data_Test_Multi_Raw')
-    print(folder_path)
-
-    # Load Data
-    file_names = ['data_test.csv', 'data_train.csv', 'target_test.csv', 'target_train.csv']
-    data_frames = []
-    for file_name in file_names:
-        file_path = os.path.join(folder_path, file_name)
-        df = pd.read_csv(file_path)
-        data_frames.append(df)
-
-    X_test = data_frames[0]
-    X_train = data_frames[1]
-    target_test = data_frames[2]    
-    target_train = data_frames[3]
-
-    # Select only one product if multi == False
-    if multi == False:
-        target_test = target_test['product_1_demand']
-        target_train = target_train['product_1_demand']
-
-    # Preprocess Data
-    # Define preprocessing for numeric columns (scale them)
-    numeric_features = ['temperature']
-    numeric_transformer = Pipeline(steps=[
-        ('imputer', SimpleImputer(strategy='median')),
-        ('scaler', StandardScaler())])
-
-    # Define preprocessing for categorical features (encode them)
-    categorical_features = ['location']
-    categorical_transformer = Pipeline(steps=[
-        ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
-        ('onehot', OneHotEncoder(handle_unknown='ignore'))])
-
-    # Combine preprocessing steps
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ('num', numeric_transformer, numeric_features),
-            ('cat', categorical_transformer, categorical_features)],
-        remainder='passthrough')
-
-    # Preprocessing on train data
-    X_train = preprocessor.fit_transform(X_train)
-
-    # Preprocessing on test data
-    X_test = preprocessor.transform(X_test)
-
-    return X_train, X_test, target_train, target_test
 
 
 def predict_SOA_ANN(X_train, X_test, target_train, target_test):
