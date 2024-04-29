@@ -266,7 +266,7 @@ def create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate,
 
         return model
 
-def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, patience, integrated=True, verbose=0, seed=42):
+def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, patience=10, integrated=True, verbose=0, seed=42):
 
     """ Train a network on the given training data with hyperparameter tuning
     
@@ -322,7 +322,7 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, pati
     param_distribs = {
         "n_hidden": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         "n_neurons": np.arange(1, 100),
-        "learning_rate": reciprocal(1e-4, 1e-2),
+        "learning_rate": np.logspace(-4,-2,num=10),
         "batch_size": [16, 32, 64, 128],
         "epochs": [10, 20, 30, 40, 50],
         "activation": ['relu', 'sigmoid', 'tanh']
@@ -345,7 +345,7 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, pati
 
     return best_estimator, hyperparameter, val_profit
 
-def train_net(hp, X_train, y_train, X_val, y_val, alpha, underage, overage, integrated=True, verbose=0, seed=42):
+def train_NN_model(hp, X_train, y_train, X_val, y_val, alpha, underage, overage, integrated=True, verbose=0, seed=42):
 
     """ Train a network on the given training data with early stopping.
     
