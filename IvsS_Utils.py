@@ -45,7 +45,7 @@ def load_data(path, multi=False):
 
     Returns
     ---------
-    X_train, X_test, target_train, target_test: np.arrays
+    raw_data : np.array
 
     """ 
     # Load Data
@@ -57,6 +57,7 @@ def load_data(path, multi=False):
         selected_columns = raw_data.columns[raw_data.columns.str.contains('product_1_demand') | ~raw_data.columns.str.contains('demand')]
         raw_data = raw_data[selected_columns]
 
+    raw_data = raw_data.to_numpy()
     return raw_data
 
 def preprocess_data(raw_data):
@@ -65,7 +66,7 @@ def preprocess_data(raw_data):
     
     Parameters
     ---------
-    raw_data : pd.DataFrame
+    raw_data : np.array
 
     Returns
     ---------
@@ -318,6 +319,7 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, pati
         Mean profit on the validation set
     """
 
+    columns = y_train
     # construct loss function based on the number of products
     if integrated == False:
         loss = tf.keras.losses.MeanSquaredError()
