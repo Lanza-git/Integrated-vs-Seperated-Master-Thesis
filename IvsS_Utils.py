@@ -9,7 +9,7 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 # Scikit-learn libraries for model selection and evaluation
 from sklearn.metrics import mean_squared_error
-from sklearn.model_selection import GridSearchCV, RandomizedSearchCV, train_test_split
+from sklearn.model_selection import RandomizedSearchCV, train_test_split
 
 # Scikit-learn library for pipeline creation
 from sklearn.pipeline import Pipeline
@@ -329,7 +329,7 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, pati
     }
 
     # perform GridSearch for hyperparameter tuning
-    grid = GridSearchCV(estimator = model_ANN, param_grid = param_distribs, cv=3, n_jobs = -1, verbose=verbose)
+    grid = RandomizedSearchCV(estimator=model_ANN, param_distributions=param_distribs, cv=3, n_iter=100, n_jobs=-1, verbose=verbose)
     grid_result = grid.fit(X_train, y_train, validation_data=(X_val, y_val), verbose=verbose)
 
     # Get the best parameters and best estimator
