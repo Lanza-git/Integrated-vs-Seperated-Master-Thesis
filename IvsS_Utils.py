@@ -325,6 +325,8 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, pati
         loss = make_nvp_loss(underage, overage)
     elif (y_train.shape[1] > 1) & (integrated == True): 
         loss = make_nvps_loss(alpha, underage, overage)
+    else:
+        raise ValueError('Invalid loss function')
 
     # create a neural network model with basic hyperparameters
     early_stopping = EarlyStopping(monitor='val_loss', patience=patience)
