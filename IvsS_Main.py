@@ -59,6 +59,8 @@ if __name__ == "__main__":
     multi_feature_data, multi_target_data = preprocess_data(multi_data)
     X_train, y_train, X_val, y_val, X_test, y_test = split_data(multi_feature_data, multi_target_data)
 
+    print(y_test.shape)
+
     # Integrated Optimization Approach:
     best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
     model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)

@@ -30,6 +30,7 @@ from scipy.stats import reciprocal
 # pulp for mathematical optimization
 from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary, LpStatus
 
+
 ######################## Data Handling Functions ############################################################
 
 def load_data(path, multi=False):
@@ -109,6 +110,20 @@ def split_data(feature_data, target_data, test_size=0.2, val_size=0.2):
     # Then, split the training+validation set into training set and validation set
     val_size_adjusted = val_size / (1 - test_size)  # Adjust the validation size
     X_train, X_val, y_train, y_val = train_test_split(X_train_val, y_train_val, test_size=val_size_adjusted, random_state=42)
+
+    # Convert to numpy arrays if they are pandas DataFrames
+    if isinstance(X_train, pd.DataFrame):
+        X_train = X_train.values
+    if isinstance(X_val, pd.DataFrame):
+        X_val = X_val.values
+    if isinstance(X_test, pd.DataFrame):
+        X_test = X_test.values
+    if isinstance(y_train, pd.DataFrame) or isinstance(y_train, pd.Series):
+        y_train = y_train.values
+    if isinstance(y_val, pd.DataFrame) or isinstance(y_val, pd.Series):
+        y_val = y_val.values
+    if isinstance(y_test, pd.DataFrame) or isinstance(y_test, pd.Series):
+        y_test = y_test.values
 
     return X_train, y_train, X_val, y_val, X_test, y_test
 
