@@ -55,6 +55,7 @@ if __name__ == "__main__":
 
     # Integrated Optimization Approach:
     best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
+    print("Hyperparameter: ", hyperparameter)
     """
     model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
     target_prediction_ANN = model_ANN_complex.predict(X_test)

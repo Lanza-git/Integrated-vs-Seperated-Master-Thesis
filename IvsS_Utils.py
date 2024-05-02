@@ -146,10 +146,6 @@ def nvps_profit(demand, q, alpha, u, o):
         orders, shape (T, N_PRODUCTS)
     alpha: np.array
         substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
-    u : np.array
-        underage costs, shape (1, N_PRODUCTS)
-    o : np.array
-        overage costs, shape (1, N_PRODUCTS)
 
     Returns
     ---------
@@ -162,7 +158,7 @@ def nvps_profit(demand, q, alpha, u, o):
     else:
         q = np.maximum(0., q) # make sure orders are non-negative
         demand_s = demand + np.matmul(np.maximum(demand-q, 0.), alpha) # demand including substitutions
-        profits = np.matmul(q, u.T) - np.matmul(np.maximum(q-demand_s, 0.), (u+o).T) # period-wise profit (T x 1)
+        profits = np.matmul(q, u) - np.matmul(np.maximum(q-demand_s, 0.), (u+o)) # period-wise profit (T x 1)
     return profits
 
 def solve_MILP(d, alpha, u, o):
@@ -369,7 +365,7 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, o
     param_distribs = {
         "n_hidden": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         "n_neurons": np.arange(1, 100),
-        "learning_rate": np.logspace(-4,-2,num=10),
+        "learning_rate": [0.01,0.001,0.0001,0.00001,0.000001],
         "batch_size": [16, 32, 64, 128],
         "epochs": [10, 20, 30, 40, 50],
         "activation": ['relu', 'sigmoid', 'tanh']
@@ -384,7 +380,7 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, o
     best_estimator = random_CV_result.best_estimator_
 
     # make predictions on validation set and compute profits
-    q_val = best_estimator.predict(X_val).numpy()
+    q_val = best_estimator.predict(X_val)
     val_profit = np.mean(nvps_profit(y_val, q_val, alpha, underage, overage))
 
     hyperparameter = [best_params['n_hidden'], best_params['n_neurons'],best_params['learning_rate'], 
