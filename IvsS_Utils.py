@@ -20,15 +20,19 @@ from tensorflow.keras.layers import Dense
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.optimizers import Adam
 import tensorflow as tf
+from tensorflow.keras.layers import Input
 
 # Scikit-learn wrapper for Keras
 from scikeras.wrappers import KerasRegressor
 
-# SciPy library for statistical functions
-from scipy.stats import reciprocal
-
 # pulp for mathematical optimization
 from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary, LpStatus
+
+
+
+alpha = []
+underage = []
+overage = []
 
 
 ######################## Data Handling Functions ############################################################
@@ -56,8 +60,6 @@ def load_data(path, multi=False):
         # Select only columns with product_1_demand or not demand (features)
         selected_columns = raw_data.columns[raw_data.columns.str.contains('product_1_demand') | ~raw_data.columns.str.contains('demand')]
         raw_data = raw_data[selected_columns]
-
-    raw_data = raw_data.to_numpy()
     return raw_data
 
 def preprocess_data(raw_data):
@@ -66,11 +68,11 @@ def preprocess_data(raw_data):
     
     Parameters
     ---------
-    raw_data : np.array
+    raw_data : pd.dataframe
 
     Returns
     ---------
-    feature_data, target_data: np.arrays    
+    feature_data, target_data: pd.dataframe
     
     """
 
@@ -237,6 +239,9 @@ def make_nvps_loss(alpha, underage, overage):
     # define the loss function
     @tf.autograph.experimental.do_not_convert
     def nvps_loss(y_true, y_pred):
+        y_true = tf.cast(y_true, tf.float32)
+        y_pred = tf.cast(y_pred, tf.float32)
+
         q = tf.maximum(y_pred, 0.)
 
         # Calculate the demand increase for each product due to substitutions from other products
@@ -244,10 +249,10 @@ def make_nvps_loss(alpha, underage, overage):
         # Adjusted demand is the original demand plus the increase due to substitutions
         adjusted_demand = y_true + demand_increase
         # Calculate the profits
-        profits = tf.matmul(q,tf.transpose(underage)) - tf.matmul(tf.maximum(0.0,q - adjusted_demand), tf.transpose(underage+overage))
+        profits = tf.matmul(q,underage) - tf.matmul(tf.maximum(0.0,q - adjusted_demand), underage+overage)
 
         return -tf.math.reduce_mean(profits)
-    
+        
     return nvps_loss
 
 def make_nvp_loss(underage, overage):
@@ -258,31 +263,43 @@ def make_nvp_loss(underage, overage):
 
     @tf.autograph.experimental.do_not_convert
     def nvp_loss(y_true, y_pred):
+        y_true = tf.cast(y_true, tf.float32)
+        y_pred = tf.cast(y_pred, tf.float32)
         error = y_true - y_pred
         return tf.keras.backend.mean(tf.maximum(q*error, (q-1)*error), axis=-1)
     
     return nvp_loss
 
 def create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed=42): 
-        
         """ Build a neural network model with the specified architecture and hyperparameters """
-
         model = Sequential()
-        model.add(Dense(n_neurons, activation=activation, input_shape=input_shape))
+        model.add(Input(shape=(input_shape,)))
         for layer in range(n_hidden):
             model.add(Dense(n_neurons, activation=activation))
         model.add(Dense(output_shape))
-
-            # set seed for reproducability
+        # set seed for reproducability
         tf.random.set_seed(seed)
         np.random.seed(seed)
-    
         optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
         model.compile(loss=loss, optimizer=optimizer)
-
         return model
 
-def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, patience=10, integrated=True, verbose=0, seed=42):
+def create_NN_multi(n_hidden, n_neurons, activation, input_shape, learning_rate, output_shape, seed=42):
+    global alpha, underage, overage
+    loss = make_nvps_loss(alpha=alpha, underage=underage, overage=overage)
+    return create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed)
+
+def create_NN_single(n_hidden, n_neurons, activation, input_shape, learning_rate, output_shape, seed=42):
+    global alpha, underage, overage
+    loss = make_nvp_loss(underage, overage)
+    return create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed)
+
+def create_NN_basic(n_hidden, n_neurons, activation, input_shape, learning_rate, output_shape, seed=42):
+    loss = tf.keras.losses.MeanSquaredError()
+    return create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed)
+
+
+def tune_NN_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, overage_input, patience=10, multi=True, integrated=True, verbose=0, seed=42):
 
     """ Train a network on the given training data with hyperparameter tuning
     
@@ -318,24 +335,35 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, pati
     val_profit : float
         Mean profit on the validation set
     """
+    global alpha, underage, overage
+    alpha = alpha_input
+    underage = underage_input
+    overage = overage_input
 
-    columns = y_train
-    # construct loss function based on the number of products
-    if integrated == False:
-        loss = tf.keras.losses.MeanSquaredError()
-    elif (y_train.shape[1] == 1) & (integrated == True):
-        loss = make_nvp_loss(underage, overage)
-    elif (y_train.shape[1] > 1) & (integrated == True): 
-        loss = make_nvps_loss(alpha, underage, overage)
-    else:
-        raise ValueError('Invalid loss function')
+    output_shape = y_train.shape[1]
+    input_shape = X_train.shape[1]
 
     # create a neural network model with basic hyperparameters
     early_stopping = EarlyStopping(monitor='val_loss', patience=patience)
-    model_ANN = KerasRegressor(build_fn=create_NN_model, n_hidden=1,n_neurons=30, activation = 'relu',
-                               input_shape=X_train.shape[1], learning_rate=0.01, 
-                               loss=loss, output_shape=y_train.shape[1], seed = seed, verbose=verbose, 
-                               callbacks=[early_stopping])
+
+    # construct loss function based on the number of products
+    if not integrated:
+        model_ANN = KerasRegressor(model=create_NN_basic, n_hidden=1,n_neurons=30, activation = 'relu',
+                                input_shape=input_shape, learning_rate=0.01, output_shape=output_shape, 
+                                seed = seed, verbose=verbose, callbacks=[early_stopping])
+    elif not multi and integrated:
+        model_ANN = KerasRegressor(model=create_NN_single, n_hidden=1,n_neurons=30, activation = 'relu',
+                               input_shape=input_shape, learning_rate=0.01, output_shape=output_shape, 
+                               seed = seed, verbose=verbose, callbacks=[early_stopping])
+
+    elif multi and integrated: 
+        model_ANN = KerasRegressor(model=create_NN_multi, n_hidden=1,n_neurons=30, activation = 'relu',
+                               input_shape=input_shape, learning_rate=0.01, output_shape=output_shape, 
+                               seed = seed, verbose=verbose, callbacks=[early_stopping])
+    else:
+        raise ValueError('Invalid Configuration')
+    
+
     
     # define the hyperparameters space
     param_distribs = {
@@ -348,12 +376,12 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, pati
     }
 
     # perform GridSearch for hyperparameter tuning
-    grid = RandomizedSearchCV(estimator=model_ANN, param_distributions=param_distribs, cv=3, n_iter=100, n_jobs=-1, verbose=verbose)
-    grid_result = grid.fit(X_train, y_train, validation_data=(X_val, y_val), verbose=verbose)
+    random_CV = RandomizedSearchCV(model_ANN, param_distribs, n_iter=100, cv=3, scoring='neg_mean_squared_error')
+    random_CV_result = random_CV.fit(X_train, y_train, validation_data=(X_val, y_val), verbose=verbose)
 
     # Get the best parameters and best estimator
-    best_params = grid_result.best_params_
-    best_estimator = grid_result.best_estimator_
+    best_params = random_CV_result.best_params_
+    best_estimator = random_CV_result.best_estimator_
 
     # make predictions on validation set and compute profits
     q_val = best_estimator.predict(X_val).numpy()
@@ -364,7 +392,7 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha, underage, overage, pati
 
     return best_estimator, hyperparameter, val_profit
 
-def train_NN_model(hp, X_train, y_train, X_val, y_val, alpha, underage, overage, integrated=True, verbose=0, seed=42):
+def train_NN_model(hp, X_train, y_train, X_val, y_val, alpha, underage, overage, multi=True, integrated=True, verbose=0, seed=42):
 
     """ Train a network on the given training data with early stopping.
     
@@ -400,9 +428,9 @@ def train_NN_model(hp, X_train, y_train, X_val, y_val, alpha, underage, overage,
     # construct loss function based on the number of products
     if integrated == False:
         loss = tf.keras.losses.MeanSquaredError()
-    elif (y_train.shape[1] == 1) & (integrated == True):
+    elif (multi == False) & (integrated == True):
         loss = make_nvp_loss(underage, overage)
-    elif (y_train.shape[1] > 1) & (integrated == True): 
+    elif (multi == True) & (integrated == True): 
         loss = make_nvps_loss(alpha, underage, overage)
 
     # extract hyperparameters, build and compile MLP

@@ -9,24 +9,15 @@ install('pandas')
 install('scikit-learn')
 install('tensorflow')
 install('scikeras')
-install('scipy')
 install('numpy')
 install('pulp')
 
 
-from sklearn.metrics import mean_squared_error
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
-from scikeras.wrappers import KerasRegressor
-from sklearn.model_selection import RandomizedSearchCV
-from tensorflow.keras.optimizers import Adam
-from scipy.stats import reciprocal
+
 import numpy as np
-from scipy.stats import norm
 
 # custom functions and constants
 from IvsS_Utils import load_data, preprocess_data, split_data
-from IvsS_Utils import nvps_profit, solve_MILP
 from IvsS_Utils import tune_NN_model, train_NN_model
 
 
@@ -34,8 +25,11 @@ from IvsS_Utils import tune_NN_model, train_NN_model
 
 # Parameters for multi-item newsvendor problem
 prices = np.array([0.3, 0.5, 0.6, 0.5, 0.5, 0.5]) #price data
+prices = prices.reshape(6,1)
 costs = np.array([0.06, 0.06, 0.06, 0.06, 0.06, 0.06]) #cost data
+costs = costs.reshape(6,1)
 salvages = np.array([0.01, 0.01, 0.01, 0.01, 0.01, 0.01]) #salvage data
+salvages = salvages.reshape(6,1)
 underage_data = prices - costs 
 overage_data = costs - salvages 
 
@@ -59,10 +53,9 @@ if __name__ == "__main__":
     multi_feature_data, multi_target_data = preprocess_data(multi_data)
     X_train, y_train, X_val, y_val, X_test, y_test = split_data(multi_feature_data, multi_target_data)
 
-    print(y_test.shape)
-
     # Integrated Optimization Approach:
     best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
+    """
     model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
     target_prediction_ANN = model_ANN_complex.predict(X_test)
     profit_complex_ANN_IOA = np.mean(nvps_profit(y_test, target_prediction_ANN, alpha_data, underage_data, overage_data))
@@ -70,8 +63,8 @@ if __name__ == "__main__":
     print("Step 1")
 
     # Seperate Optimization Approach:
-    best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, integrated = False)
-    model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, integrated = False)
+    best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True, integrated = False)
+    model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True,  integrated = False)
     target_prediction_ANN = model_ANN_complex.predict(X_test)
     orders_ANN_complex, status_ANN_complex = solve_MILP(target_prediction_ANN, alpha_data, underage_data, overage_data)
     profit_complex_ANN_SOA = np.mean(nvps_profit(y_test, orders_ANN_complex, alpha_data, underage_data, overage_data))
@@ -79,21 +72,21 @@ if __name__ == "__main__":
     print("Step 2")
 
     # Neural network - Simple
-    multi_data = load_data(path, False)
-    multi_feature_data, multi_target_data = preprocess_data(multi_data)
-    X_train, y_train, X_val, y_val, X_test, y_test = split_data(multi_feature_data, multi_target_data)
+    single_data = load_data(path, False)
+    single_feature_data, single_target_data = preprocess_data(single_data)
+    X_train, y_train, X_val, y_val, X_test, y_test = split_data(single_feature_data, single_target_data)
 
     # Integrated Optimization Approach:
-    best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
-    model_ANN_simple = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
+    best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = False)
+    model_ANN_simple = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = False)
     target_prediction_ANN = model_ANN_simple.predict(X_test)
     profit_simple_ANN_IOA = np.mean(nvps_profit(y_test, target_prediction_ANN, alpha_data, underage_data, overage_data))
 
     print("Step 3")
 
     # Seperate Optimization Approach:
-    best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, integrated = False)
-    model_ANN_simple = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, integrated = False)
+    best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = False, integrated = False)
+    model_ANN_simple = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = False, integrated = False)
     target_prediction_ANN = model_ANN_simple.predict(X_test)
     orders_ANN_simple, status_ANN_simple = solve_MILP(target_prediction_ANN, alpha_data, underage_data, overage_data)
     profit_simple_ANN_SOA = np.mean(nvps_profit(y_test, orders_ANN_simple, alpha_data, underage_data, overage_data))
@@ -108,3 +101,4 @@ if __name__ == "__main__":
     print("Hyperparameter Complex ANN SOA: ", hyperparameter)
     print("Hyperparameter Simple ANN IOA: ", hyperparameter)
     print("Hyperparameter Simple ANN SOA: ", hyperparameter)
+"""
