@@ -11,13 +11,14 @@ install('tensorflow')
 install('scikeras')
 install('numpy')
 install('pulp')
-
+install('xgboost')
+install('typing')
 
 
 import numpy as np
 
 # custom functions and constants
-from IvsS_Utils import load_data, preprocess_data, split_data
+from IvsS_Utils import load_data, preprocess_data, split_data, nvps_profit, solve_MILP
 from IvsS_Utils import tune_NN_model, train_NN_model
 
 
@@ -56,7 +57,6 @@ if __name__ == "__main__":
     # Integrated Optimization Approach:
     best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
     print("Hyperparameter: ", hyperparameter)
-    """
     model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
     target_prediction_ANN = model_ANN_complex.predict(X_test)
     profit_complex_ANN_IOA = np.mean(nvps_profit(y_test, target_prediction_ANN, alpha_data, underage_data, overage_data))
@@ -102,4 +102,3 @@ if __name__ == "__main__":
     print("Hyperparameter Complex ANN SOA: ", hyperparameter)
     print("Hyperparameter Simple ANN IOA: ", hyperparameter)
     print("Hyperparameter Simple ANN SOA: ", hyperparameter)
-"""

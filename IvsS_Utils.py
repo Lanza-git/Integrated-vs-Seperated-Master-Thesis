@@ -28,6 +28,9 @@ from scikeras.wrappers import KerasRegressor
 # pulp for mathematical optimization
 from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary, LpStatus
 
+from typing import Tuple
+import xgboost as xgb
+
 
 
 alpha = []
@@ -364,8 +367,8 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, o
     # define the hyperparameters space
     param_distribs = {
         "n_hidden": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        "n_neurons": np.arange(1, 100),
-        "learning_rate": [0.01,0.001,0.0001,0.00001,0.000001],
+        "n_neurons": np.arange(1, 30),
+        "learning_rate": [0.01,0.001,0.0001,0.00001],
         "batch_size": [16, 32, 64, 128],
         "epochs": [10, 20, 30, 40, 50],
         "activation": ['relu', 'sigmoid', 'tanh']
@@ -445,3 +448,66 @@ def train_NN_model(hp, X_train, y_train, X_val, y_val, alpha, underage, overage,
 
 ######################### LightGBM Functions ######################################################################
 
+def tune_XGB_model(X_train, target_train, alpha_data, underage_data, overage_data, verbose=0, seed=42):
+
+    def gradient(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
+        y = dtrain.get_label().reshape(predt.shape)
+        d = y + np.matmul(np.maximum(0, y - predt), alpha_data)
+        u = np.array(underage_data)
+        o = np.array(overage_data)
+        return (-(u * np.maximum(0,d-predt) - o * np.maximum(0, predt-d))).reshape(y.size)
+                
+    def hessian(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
+        return np.ones(predt.shape).reshape(predt.size)
+        
+    def custom_loss(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[np.ndarray, np.ndarray]:
+        grad = gradient(predt, dtrain)
+        hess = hessian(predt, dtrain)
+        return grad, hess
+        
+    def newsvendorRMSE(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[str, float]:
+        y = dtrain.get_label().reshape(predt.shape)
+        d = y + np.matmul(np.maximum(0, y - predt), alpha_data)
+        v = np.sqrt(np.sum(np.power(d - predt, 2)))
+        return "newsvendorRMSE", v
+
+    # Define the parameter grid
+    param_grid = {
+        "learning_rate": [0.1, 0.2, 0.3, 0.4, 0.5],
+        "max_depth": [2, 3, 4, 5, 6],
+        "n_estimators": [100, 110, 120, 130, 140],
+        "subsample": [0.3, 0.5, 0.7, 0.9],
+    }
+
+    X, y = X_train, target_train  
+    Xy = xgb.DMatrix(X, label=y)
+
+    # Create a XGBRegressor object
+    xgb_model = xgb.XGBRegressor(
+        objective=custom_loss,
+        tree_method="hist",
+        num_target=target_train.shape[1],
+        multi_strategy="multi_output_tree")
+
+    # Create the RandomizedSearchCV object
+    random_search = RandomizedSearchCV(xgb_model, param_distributions=param_grid, n_iter=25, scoring='neg_mean_squared_error', n_jobs=4, cv=5, verbose=3)
+
+    # Fit the data to the RandomizedSearchCV object
+    random_search.fit(X, y)
+
+    # Get the best parameters
+    best_params = random_search.best_params_
+    results = {}
+
+    # Train the model with the best parameters
+    booster = xgb.train(
+        best_params,
+        dtrain=Xy,
+        num_boost_round=128,
+        obj=custom_loss,
+        evals=[(Xy, "Train")],
+        evals_result=results,
+        custom_metric=newsvendorRMSE
+    )
+
+    return booster, best_params, results
