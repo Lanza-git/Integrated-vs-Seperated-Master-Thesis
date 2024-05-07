@@ -26,7 +26,7 @@ from tensorflow.keras.layers import Input
 from scikeras.wrappers import KerasRegressor
 
 # pulp for mathematical optimization
-from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary, LpStatus
+from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary, LpStatus, PULP_CBC_CMD
 
 from typing import Tuple
 import xgboost as xgb
@@ -164,9 +164,70 @@ def nvps_profit(demand, q, alpha, u, o):
         profits = np.matmul(q, u) - np.matmul(np.maximum(q-demand_s, 0.), (u+o)) # period-wise profit (T x 1)
     return profits
 
-def solve_MILP(d, alpha, u, o):
 
-    """ helper function that solves the mixed-integer linear program (MILP) of the multi-product newsvendor problem under substitution (cf. slides)
+def solve_MILP(d, alpha, u, o):
+    """
+    Solve the mixed-integer linear program (MILP) of the multi-product newsvendor problem under substitution.
+    
+    Parameters
+    ----------
+    d : np.array
+        Demand samples of shape (T, N_PRODUCTS), where `T` denotes the number of time stamps.
+    alpha : np.array
+        Substitution rates, shape (N_PRODUCTS, N_PRODUCTS).
+    u : np.array
+        Underage costs, shape (1, N_PRODUCTS).
+    o : np.array
+        Overage costs, shape (1, N_PRODUCTS).
+    
+    Returns
+    ----------
+    orders: np.array
+        Optimal orders, of shape (T, N_PRODUCTS).
+    status : str
+        The status of the solution.
+    """
+    
+    # Extract dimensions
+    T = d.shape[0]        # Number of time stamps
+    n_prods = d.shape[1]  # Number of products
+    
+    # Calculate big-M values
+    d_min = np.min(d, axis=0)
+    d_max = d + np.matmul(d, alpha)
+    M = np.max(d_max, axis=0) - d_min
+    
+    # Initialize model
+    model = LpProblem("Multi_Product_Newsvendor", LpMaximize)
+    
+    # Initialize decision variables
+    z = [[LpVariable(f'z_{t}_{i}', cat=LpBinary) for i in range(n_prods)] for t in range(T)]
+    q = [[LpVariable(f'q_{t}_{i}', lowBound=0) for i in range(n_prods)] for t in range(T)]
+    y = [[LpVariable(f'y_{t}_{i}', lowBound=0) for i in range(n_prods)] for t in range(T)]
+    v = [[LpVariable(f'v_{t}_{i}', lowBound=0) for i in range(n_prods)] for t in range(T)]
+    
+    # Objective function
+    model += lpSum(u[i] * q[t][i] - (u[i] + o[i]) * y[t][i] for i in range(n_prods) for t in range(T))
+    
+    # Constraints
+    for t in range(T):
+        for i in range(n_prods):
+            model += y[t][i] >= q[t][i] - d[t, i].item() - lpSum(alpha[j, i] * v[t][j] for j in range(n_prods) if j != i)
+            model += v[t][i] <= d[t, i].item() - q[t][i] + M[i] * z[t][i]
+            model += v[t][i] >= d[t, i].item() - q[t][i] - M[i] * z[t][i]
+            model += v[t][i] <= d[t, i].item() * (1 - z[t][i])
+    
+    # Solve and retrieve solution
+    model.solve()
+    orders = np.array([[q[t][p].varValue for p in range(n_prods)] for t in range(T)])
+    
+    return orders, LpStatus[model.status]
+
+
+
+def solve_MILP_CBC(d, alpha, u, o, n_threads=1):
+    """Helper function that solves the mixed-integer linear program (MILP) 
+    of the multi-product newsvendor problem under substitution.
     
     Parameters
     -----------
@@ -178,51 +239,55 @@ def solve_MILP(d, alpha, u, o):
         underage costs, shape (1, N_PRODUCTS)
     o : np.array
         overage costs, shape (1, N_PRODUCTS)
-    n_prods : int
-        number of products
+    n_threads : int
+        number of threads
 
     Returns
     ----------
     orders: np.array
         Optimal orders, of shape (1, N_PRODUCTS)
-    model.status : int
-       
+    status : str
+        CBC status code
     """
-
-    n_prods = d.shape[1] # number of products
-
-    hist = d.shape[0] # number of demand samples 
+    # Extract dimensions
+    n_prods = d.shape[1]  # Number of products
+    hist = d.shape[0]  # number of demand samples
 
     # compute upper bounds M
     d_min = np.min(d, axis=0)
     d_max = d + np.matmul(d, alpha)
-    M = np.array(np.max(d_max, axis=0)[0]-d_min)
+    M = np.array(np.max(d_max, axis=0)[0] - d_min)
 
     # initialize model
-    model = LpProblem("My Model", LpMaximize)
+    model = LpProblem("MultiProductNewsvendor", LpMaximize)
 
     # initialize model variables
-    z = [[LpVariable(f'z_{t}_{i}', cat='Binary') for i in range(n_prods)] for t in range(hist)]
-    q = [LpVariable(f'q_{i}') for i in range(n_prods)]
-    y = [[LpVariable(f'y_{t}_{i}') for i in range(n_prods)] for t in range(hist)]
-    v = [[LpVariable(f'v_{t}_{i}') for i in range(n_prods)] for t in range(hist)]
+    z = {(t, i): LpVariable(f"z_{t}_{i}", cat=LpBinary) for t in range(hist) for i in range(n_prods)}
+    q = {i: LpVariable(f"q_{i}", lowBound=0) for i in range(n_prods)}
+    y = {(t, i): LpVariable(f"y_{t}_{i}", lowBound=0) for t in range(hist) for i in range(n_prods)}
+    v = {(t, i): LpVariable(f"v_{t}_{i}", lowBound=0) for t in range(hist) for i in range(n_prods)}
 
     # objective function
-    model += lpSum(u[0, i].item()*q[i] - (u[0, i].item()+o[0, i].item()) / hist * y[t][i] for i in range(n_prods) for t in range(hist))
+    obj = lpSum(u[0, i].item() * q[i] for i in range(n_prods))
+    obj -= lpSum((u[0, i].item() + o[0, i].item()) / hist * y[t, i] for t in range(hist) for i in range(n_prods))
+    model += obj
 
     # constraints
     for i in range(n_prods):
         for t in range(hist):
-            model += y[t][i] >= q[i] - d[t, i].item() - lpSum(alpha[j, i]*v[t][j] for j in range(n_prods))
-            model += v[t][i] <= d[t, i].item() - q[i] + M[i]*z[t][i]
-            model += v[t][i] >= d[t, i].item() - q[i] - M[i]*z[t][i]
-            model += v[t][i] <= d[t, i].item() * (1 - z[t][i])
+            model += y[t, i] >= q[i] - d[t, i].item() - lpSum(alpha[j, i] * v[t, j] for j in range(n_prods))
+            model += v[t, i] <= d[t, i].item() - q[i] + M[i] * z[t, i]
+            model += v[t, i] >= d[t, i].item() - q[i] - M[i] * z[t, i]
+            model += v[t, i] <= d[t, i].item() * (1 - z[t, i])
 
-    # solve and retrieve solution
-    model.solve()
+    # solve and retrieve solution using CBC solver
+    solver = PULP_CBC_CMD(threads=n_threads)
+    model.solve(solver)
+
     orders = np.array([[q[p].varValue for p in range(n_prods)]])
+    return orders, model.status
 
-    return orders, LpStatus[model.status]
+
 
 ######################### Neural Network Functions ######################################################################
 
@@ -460,9 +525,10 @@ def tune_XGB_model(X_train, target_train, alpha_data, underage_data, overage_dat
     def hessian(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
         return np.ones(predt.shape).reshape(predt.size)
         
-    def custom_loss(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[np.ndarray, np.ndarray]:
-        grad = gradient(predt, dtrain)
-        hess = hessian(predt, dtrain)
+    def custom_loss(predt: np.ndarray, dtrain: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        dtrain_dmatrix = xgb.DMatrix(data=dtrain)
+        grad = gradient(predt, dtrain_dmatrix)
+        hess = hessian(predt, dtrain_dmatrix)
         return grad, hess
         
     def newsvendorRMSE(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[str, float]:

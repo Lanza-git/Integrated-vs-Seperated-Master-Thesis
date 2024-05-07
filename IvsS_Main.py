@@ -18,7 +18,7 @@ install('typing')
 import numpy as np
 
 # custom functions and constants
-from IvsS_Utils import load_data, preprocess_data, split_data, nvps_profit, solve_MILP
+from IvsS_Utils import load_data, preprocess_data, split_data, nvps_profit, solve_MILP, solve_MILP_CBC
 from IvsS_Utils import tune_NN_model, train_NN_model
 
 
@@ -56,21 +56,22 @@ if __name__ == "__main__":
 
     # Integrated Optimization Approach:
     best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
-    print("Hyperparameter: ", hyperparameter)
     model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
     target_prediction_ANN = model_ANN_complex.predict(X_test)
     profit_complex_ANN_IOA = np.mean(nvps_profit(y_test, target_prediction_ANN, alpha_data, underage_data, overage_data))
 
-    print("Step 1")
+    print("Step 1: "+ str(profit_complex_ANN_IOA))
+    print("Hyperparameter IOA complex: ", hyperparameter)
 
     # Seperate Optimization Approach:
     best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True, integrated = False)
     model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True,  integrated = False)
     target_prediction_ANN = model_ANN_complex.predict(X_test)
-    orders_ANN_complex, status_ANN_complex = solve_MILP(target_prediction_ANN, alpha_data, underage_data, overage_data)
+    orders_ANN_complex, status_ANN_complex = solve_MILP_CBC(target_prediction_ANN, alpha_data, underage_data, overage_data, 40)
     profit_complex_ANN_SOA = np.mean(nvps_profit(y_test, orders_ANN_complex, alpha_data, underage_data, overage_data))
 
-    print("Step 2")
+    print("Step 2: "+ str(profit_complex_ANN_SOA))
+    print("Hyperparameter SOA complex: ", hyperparameter)
 
     # Neural network - Simple
     single_data = load_data(path, False)
@@ -89,7 +90,7 @@ if __name__ == "__main__":
     best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = False, integrated = False)
     model_ANN_simple = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = False, integrated = False)
     target_prediction_ANN = model_ANN_simple.predict(X_test)
-    orders_ANN_simple, status_ANN_simple = solve_MILP(target_prediction_ANN, alpha_data, underage_data, overage_data)
+    orders_ANN_simple, status_ANN_simple = solve_MILP_CBC(target_prediction_ANN, alpha_data, underage_data, overage_data,40)
     profit_simple_ANN_SOA = np.mean(nvps_profit(y_test, orders_ANN_simple, alpha_data, underage_data, overage_data))
 
     # Print results
