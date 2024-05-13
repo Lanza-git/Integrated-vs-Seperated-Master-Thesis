@@ -13,13 +13,15 @@ install('numpy')
 install('pulp')
 install('xgboost')
 install('typing')
+install('optuna')
+install('optuna-integration')
 
 
 import numpy as np
 
 # custom functions and constants
 from IvsS_Utils import load_data, preprocess_data, split_data, nvps_profit, solve_MILP, solve_MILP_CBC
-from IvsS_Utils import tune_NN_model, train_NN_model
+from IvsS_Utils import tune_NN_model, train_NN_model, tune_NN_model_optuna
 
 
 ####################################### Constants ##############################################################################
@@ -47,7 +49,7 @@ alpha_data = np.array([             #alpha data
 ####################################### Functions ##############################################################################
 
 if __name__ == "__main__":
-
+    
     # Neural network - Complex
     path = "data.csv"
     multi_data = load_data(path, True)
@@ -55,14 +57,14 @@ if __name__ == "__main__":
     X_train, y_train, X_val, y_val, X_test, y_test = split_data(multi_feature_data, multi_target_data)
 
     # Integrated Optimization Approach:
-    best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
+    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
     model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
     target_prediction_ANN = model_ANN_complex.predict(X_test)
     profit_complex_ANN_IOA = np.mean(nvps_profit(y_test, target_prediction_ANN, alpha_data, underage_data, overage_data))
 
-    print("Step 1: "+ str(profit_complex_ANN_IOA))
-    print("Hyperparameter IOA complex: ", hyperparameter)
 
+    print("Step 1: "+ str(profit_complex_ANN_IOA))
+ 
     # Seperate Optimization Approach:
     best_estimator, hyperparameter, val_profit = tune_NN_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True, integrated = False)
     model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True,  integrated = False)
@@ -71,7 +73,6 @@ if __name__ == "__main__":
     profit_complex_ANN_SOA = np.mean(nvps_profit(y_test, orders_ANN_complex, alpha_data, underage_data, overage_data))
 
     print("Step 2: "+ str(profit_complex_ANN_SOA))
-    print("Hyperparameter SOA complex: ", hyperparameter)
 
     # Neural network - Simple
     single_data = load_data(path, False)
@@ -98,8 +99,3 @@ if __name__ == "__main__":
     print("Profit Complex ANN SOA: ", profit_complex_ANN_SOA)
     print("Profit Simple ANN IOA: ", profit_simple_ANN_IOA)
     print("Profit Simple ANN SOA: ", profit_simple_ANN_SOA)
-
-    print("Hyperparameter Complex ANN IOA: ", hyperparameter)
-    print("Hyperparameter Complex ANN SOA: ", hyperparameter)
-    print("Hyperparameter Simple ANN IOA: ", hyperparameter)
-    print("Hyperparameter Simple ANN SOA: ", hyperparameter)

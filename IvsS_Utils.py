@@ -30,7 +30,8 @@ from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary, LpStatus, P
 
 from typing import Tuple
 import xgboost as xgb
-
+import optuna
+from optuna_integration.keras import KerasPruningCallback
 
 
 alpha = []
@@ -188,6 +189,7 @@ def solve_MILP(d, alpha, u, o):
         The status of the solution.
     """
     
+    
     # Extract dimensions
     T = d.shape[0]        # Number of time stamps
     n_prods = d.shape[1]  # Number of products
@@ -225,7 +227,7 @@ def solve_MILP(d, alpha, u, o):
 
 
 
-def solve_MILP_CBC(d, alpha, u, o, n_threads=1):
+def solve_MILP_CBC(d, alpha, u, o, n_threads=40):
     """Helper function that solves the mixed-integer linear program (MILP) 
     of the multi-product newsvendor problem under substitution.
     
@@ -249,6 +251,9 @@ def solve_MILP_CBC(d, alpha, u, o, n_threads=1):
     status : str
         CBC status code
     """
+    u = u.T
+    o = o.T
+
     # Extract dimensions
     n_prods = d.shape[1]  # Number of products
     hist = d.shape[0]  # number of demand samples
@@ -281,10 +286,11 @@ def solve_MILP_CBC(d, alpha, u, o, n_threads=1):
             model += v[t, i] <= d[t, i].item() * (1 - z[t, i])
 
     # solve and retrieve solution using CBC solver
-    solver = PULP_CBC_CMD(threads=n_threads)
-    model.solve(solver)
+    solver = PULP_CBC_CMD(threads=n_threads, maxSeconds=7200)
+    model.solve(solver, msg=True)
 
     orders = np.array([[q[p].varValue for p in range(n_prods)]])
+    
     return orders, model.status
 
 
@@ -456,6 +462,66 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, o
 
     return best_estimator, hyperparameter, val_profit
 
+def tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_input, underage_input, overage_input, patience=10, multi=True, integrated=True, verbose=0, seed=42):
+
+    global alpha, underage, overage
+    alpha = alpha_input
+    underage = underage_input
+    overage = overage_input
+
+    output_shape = y_train.shape[1]
+    input_shape = X_train.shape[1]
+
+    def objective(trial):
+        # define the hyperparameters space
+        n_hidden = trial.suggest_int('n_hidden', 0, 10)
+        n_neurons = trial.suggest_int('n_neurons', 1, 30)
+        learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-1, log=True)
+        batch_size = trial.suggest_categorical('batch_size', [16, 32, 64, 128])
+        epochs = trial.suggest_int('epochs', 10, 50)
+        activation = trial.suggest_categorical('activation', ['relu', 'sigmoid', 'tanh'])
+
+        # create a neural network model with basic hyperparameters
+        early_stopping = EarlyStopping(monitor='val_loss', patience=patience)
+
+        # construct loss function based on the number of products
+        if not integrated:
+            model_ANN = KerasRegressor(model=create_NN_basic, n_hidden=n_hidden, n_neurons=n_neurons, activation=activation,
+                                    input_shape=input_shape, learning_rate=learning_rate, output_shape=output_shape, 
+                                    seed=seed, verbose=verbose, callbacks=[early_stopping])
+        elif not multi and integrated:
+            model_ANN = KerasRegressor(model=create_NN_single, n_hidden=n_hidden, n_neurons=n_neurons, activation=activation,
+                                input_shape=input_shape, learning_rate=learning_rate, output_shape=output_shape, 
+                                seed=seed, verbose=verbose, callbacks=[early_stopping])
+        elif multi and integrated: 
+            model_ANN = KerasRegressor(model=create_NN_multi, n_hidden=n_hidden, n_neurons=n_neurons, activation=activation,
+                                input_shape=input_shape, learning_rate=learning_rate, output_shape=output_shape, 
+                                seed=seed, verbose=verbose, callbacks=[early_stopping])
+        else:
+            raise ValueError('Invalid Configuration')
+
+        pruning_callback = KerasPruningCallback(trial, 'val_loss')
+        model_ANN.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=epochs, batch_size=batch_size, verbose=verbose, callbacks=[pruning_callback])
+
+        # make predictions on validation set and compute profits
+        q_val = model_ANN.predict(X_val)
+        val_profit = np.mean(nvps_profit(y_val, q_val, alpha, underage, overage))
+
+        return val_profit
+
+    study = optuna.create_study(direction='maximize')
+    study.optimize(objective, n_trials=100, n_jobs=40)
+
+    # Get the best parameters and best estimator
+    best_params = study.best_params
+    best_estimator = None
+
+    hyperparameter = [best_params['n_hidden'], best_params['n_neurons'],best_params['learning_rate'], 
+                    best_params['epochs'], patience, best_params['batch_size'], best_params['activation']]
+
+    return best_estimator, hyperparameter, study.best_value
+
+
 def train_NN_model(hp, X_train, y_train, X_val, y_val, alpha, underage, overage, multi=True, integrated=True, verbose=0, seed=42):
 
     """ Train a network on the given training data with early stopping.
@@ -513,67 +579,130 @@ def train_NN_model(hp, X_train, y_train, X_val, y_val, alpha, underage, overage,
 
 ######################### LightGBM Functions ######################################################################
 
-def tune_XGB_model(X_train, target_train, alpha_data, underage_data, overage_data, verbose=0, seed=42):
-
-    def gradient(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
-        y = dtrain.get_label().reshape(predt.shape)
-        d = y + np.matmul(np.maximum(0, y - predt), alpha_data)
-        u = np.array(underage_data)
-        o = np.array(overage_data)
-        return (-(u * np.maximum(0,d-predt) - o * np.maximum(0, predt-d))).reshape(y.size)
+def gradient(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
+    if isinstance(dtrain, np.ndarray):
+        dtrain = xgb.DMatrix(dtrain)
+    global alpha, underage, overage
+    y = dtrain.get_label().reshape(predt.shape)
+    d = y + np.matmul(np.maximum(0, y - predt), alpha)
+    u = np.array(underage)
+    o = np.array(overage)
+    return (-(u * np.maximum(0,d-predt) - o * np.maximum(0, predt-d))).reshape(y.size)
                 
-    def hessian(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
-        return np.ones(predt.shape).reshape(predt.size)
+def hessian(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
+    return np.ones(predt.shape).reshape(predt.size)
         
-    def custom_loss(predt: np.ndarray, dtrain: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        dtrain_dmatrix = xgb.DMatrix(data=dtrain)
-        grad = gradient(predt, dtrain_dmatrix)
-        hess = hessian(predt, dtrain_dmatrix)
-        return grad, hess
-        
-    def newsvendorRMSE(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[str, float]:
-        y = dtrain.get_label().reshape(predt.shape)
-        d = y + np.matmul(np.maximum(0, y - predt), alpha_data)
-        v = np.sqrt(np.sum(np.power(d - predt, 2)))
-        return "newsvendorRMSE", v
+def custom_loss(predt: np.ndarray, dtrain: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    grad = gradient(predt, dtrain)
+    hess = hessian(predt, dtrain)
+    return grad, hess
 
-    # Define the parameter grid
-    param_grid = {
-        "learning_rate": [0.1, 0.2, 0.3, 0.4, 0.5],
-        "max_depth": [2, 3, 4, 5, 6],
-        "n_estimators": [100, 110, 120, 130, 140],
-        "subsample": [0.3, 0.5, 0.7, 0.9],
-    }
+def newsvendorRMSE(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[str, float]:
+    global alpha
+    y = dtrain.get_label().reshape(predt.shape)
+    d = y + np.matmul(np.maximum(0, y - predt), alpha)
+    v = np.sqrt(np.sum(np.power(d - predt, 2)))
+    return "newsvendorRMSE", v
 
-    X, y = X_train, target_train  
+def tune_XGB_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, overage_input, patience=10, multi=True, integrated=True, verbose=0, seed=42):
+
+    if y_train.shape[1] == 1 and integrated == True:
+        multi_strategy = "one_output_per_tree"
+        objective = "reg:quantileerror"
+        quantile = underage_input / (underage_input + overage_input)
+    elif y_train.shape[1] != 1 and integrated == True:
+        global alpha, underage, overage
+        alpha = alpha_input
+        underage = underage_input.flatten()
+        overage = overage_input.flatten()
+
+        multi_strategy = "multi_output_tree"
+        objective = custom_loss
+        quantile = 0
+    else:
+        multi_strategy = "one_output_per_tree"
+        objective = "reg:squarederror"
+        quantile = 0
+
+
+    X, y = X_train, y_train  
     Xy = xgb.DMatrix(X, label=y)
-
-    # Create a XGBRegressor object
-    xgb_model = xgb.XGBRegressor(
-        objective=custom_loss,
-        tree_method="hist",
-        num_target=target_train.shape[1],
-        multi_strategy="multi_output_tree")
-
-    # Create the RandomizedSearchCV object
-    random_search = RandomizedSearchCV(xgb_model, param_distributions=param_grid, n_iter=25, scoring='neg_mean_squared_error', n_jobs=4, cv=5, verbose=3)
-
-    # Fit the data to the RandomizedSearchCV object
-    random_search.fit(X, y)
-
-    # Get the best parameters
-    best_params = random_search.best_params_
     results = {}
 
-    # Train the model with the best parameters
-    booster = xgb.train(
+    def objective(trial):
+        params = {
+            "tree_method": "hist",
+            "num_target": y.shape[1],
+            "multi_strategy": multi_strategy,
+            "learning_rate": trial.suggest_float("learning_rate", 0.1, 0.5),
+            "max_depth": trial.suggest_int("max_depth", 2, 6),
+            "n_estimators": trial.suggest_int("n_estimators", 100, 140),    #????????
+            "subsample": trial.suggest_float("subsample", 0.3, 0.9),
+            "quantile_alpha": quantile,
+        }
+        booster = xgb.train(
+            params,
+            dtrain=Xy,
+            num_boost_round=128,
+            obj=custom_loss,
+            evals=[(Xy, "Train")],
+            evals_result=results,
+            custom_metric=newsvendorRMSE
+        )
+        preds = booster.predict(Xy)
+        error = newsvendorRMSE(preds, Xy)[1]  
+        return error
+
+    study = optuna.create_study(direction="minimize")
+    study.optimize(objective, n_trials=100, n_jobs=40)  
+
+    trial = study.best_trial
+    for key, value in trial.params.items():
+        print("    {}: {}".format(key, value))
+
+    # Get the best parameters
+    best_params = study.best_trial.params
+
+    # Add the fixed parameters
+    best_params.update({
+        "tree_method": "hist",
+        "num_target": y.shape[1],
+        "multi_strategy": "multi_output_tree",
+    })
+
+    # Train the final model
+    final_booster = xgb.train(
         best_params,
         dtrain=Xy,
         num_boost_round=128,
         obj=custom_loss,
         evals=[(Xy, "Train")],
-        evals_result=results,
-        custom_metric=newsvendorRMSE
+        #custom_metric=newsvendorRMSE
     )
 
-    return booster, best_params, results
+    return final_booster, best_params, results
+
+def train_XGB_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data):
+
+    global alpha, underage, overage
+    alpha = alpha_data
+    underage = underage_data.flatten()
+    overage = overage_data.flatten()
+
+    # Train the final model
+    Xy = xgb.DMatrix(X_train, label=y_train)
+    results = {}
+    
+    final_booster = xgb.train(
+        hyperparameter,
+        dtrain=Xy,
+        num_boost_round=128,
+        obj=custom_loss,
+        evals=[(Xy, "Train")],
+        custom_metric=newsvendorRMSE
+    )
+    return final_booster, results
+
+
+
+
