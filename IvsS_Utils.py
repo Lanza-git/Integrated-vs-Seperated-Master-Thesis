@@ -34,9 +34,52 @@ import optuna
 from optuna_integration.keras import KerasPruningCallback
 
 
+import gurobipy as gp
+from gurobipy import GRB
+
+from scipy.stats import norm
+
+import os
+from keras.utils import get_custom_objects
+
 alpha = []
 underage = []
 overage = []
+
+######################## Environment Setup Functions ######################################################################
+
+def load_packages():
+    # General imports
+    import subprocess
+    import sys
+
+
+    def install(package):
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+    install('pandas')
+    install('scikit-learn')
+    install('scikeras')
+    install('numpy')
+    install('pulp')
+    install('xgboost')
+    install('typing')
+    install('optuna')
+    install('optuna-integration')
+    install('gurobipy')
+
+    install('tensorflow<2.13')
+
+def create_environment():
+    """ Create the environment for the newsvendor problem
+    
+    Returns
+    ---------
+    None
+    """
+    # Set the environment variables for Gurobi
+    os.environ['GRB_LICENSE_FILE'] = '/pfs/data5/home/ma/ma_ma/ma_elanza/test_dir/gurobi.lic'
+    #os.environ['TF_ENABLE_ONEDNN_OPTS']=0
 
 
 ######################## Data Handling Functions ############################################################
@@ -107,7 +150,7 @@ def preprocess_data(raw_data):
 
     # Preprocessing on  data
     feature_data = preprocessor.fit_transform(feature_data)
-    
+
     return feature_data, target_data
 
 def split_data(feature_data, target_data, test_size=0.2, val_size=0.2):
@@ -135,7 +178,6 @@ def split_data(feature_data, target_data, test_size=0.2, val_size=0.2):
     return X_train, y_train, X_val, y_val, X_test, y_test
 
 
-
 ######################### Newsvendor related Functions ########################################################
 
 def nvps_profit(demand, q, alpha, u, o):
@@ -145,9 +187,9 @@ def nvps_profit(demand, q, alpha, u, o):
     Parameters
     ---------
     demand : np.array
-        demand, shape (T, N_PRODUCTS)
+        actual demand, shape (T, N_PRODUCTS)
     q : np.array
-        orders, shape (T, N_PRODUCTS)
+        predicted orders, shape (T, N_PRODUCTS)
     alpha: np.array
         substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
 
@@ -158,78 +200,16 @@ def nvps_profit(demand, q, alpha, u, o):
     """
     if demand.shape[1] == 1:
         q = np.maximum(0., q)
-        profits = np.maximum(q-demand, 0.)*u - np.maximum(demand-q, 0.)*(u+o)
+        profits = np.sum(np.minimum(q,demand)*u - np.maximum(demand-q, 0.)*(u)-np.maximum(q-demand, 0.)*(o))
     else:
         q = np.maximum(0., q) # make sure orders are non-negative
         demand_s = demand + np.matmul(np.maximum(demand-q, 0.), alpha) # demand including substitutions
         profits = np.matmul(q, u) - np.matmul(np.maximum(q-demand_s, 0.), (u+o)) # period-wise profit (T x 1)
     return profits
 
+def solve_MILP(d, alpha, u, o, n_prods, n_threads=1):
 
-def solve_MILP(d, alpha, u, o):
-    """
-    Solve the mixed-integer linear program (MILP) of the multi-product newsvendor problem under substitution.
-    
-    Parameters
-    ----------
-    d : np.array
-        Demand samples of shape (T, N_PRODUCTS), where `T` denotes the number of time stamps.
-    alpha : np.array
-        Substitution rates, shape (N_PRODUCTS, N_PRODUCTS).
-    u : np.array
-        Underage costs, shape (1, N_PRODUCTS).
-    o : np.array
-        Overage costs, shape (1, N_PRODUCTS).
-    
-    Returns
-    ----------
-    orders: np.array
-        Optimal orders, of shape (T, N_PRODUCTS).
-    status : str
-        The status of the solution.
-    """
-    
-    
-    # Extract dimensions
-    T = d.shape[0]        # Number of time stamps
-    n_prods = d.shape[1]  # Number of products
-    
-    # Calculate big-M values
-    d_min = np.min(d, axis=0)
-    d_max = d + np.matmul(d, alpha)
-    M = np.max(d_max, axis=0) - d_min
-    
-    # Initialize model
-    model = LpProblem("Multi_Product_Newsvendor", LpMaximize)
-    
-    # Initialize decision variables
-    z = [[LpVariable(f'z_{t}_{i}', cat=LpBinary) for i in range(n_prods)] for t in range(T)]
-    q = [[LpVariable(f'q_{t}_{i}', lowBound=0) for i in range(n_prods)] for t in range(T)]
-    y = [[LpVariable(f'y_{t}_{i}', lowBound=0) for i in range(n_prods)] for t in range(T)]
-    v = [[LpVariable(f'v_{t}_{i}', lowBound=0) for i in range(n_prods)] for t in range(T)]
-    
-    # Objective function
-    model += lpSum(u[i] * q[t][i] - (u[i] + o[i]) * y[t][i] for i in range(n_prods) for t in range(T))
-    
-    # Constraints
-    for t in range(T):
-        for i in range(n_prods):
-            model += y[t][i] >= q[t][i] - d[t, i].item() - lpSum(alpha[j, i] * v[t][j] for j in range(n_prods) if j != i)
-            model += v[t][i] <= d[t, i].item() - q[t][i] + M[i] * z[t][i]
-            model += v[t][i] >= d[t, i].item() - q[t][i] - M[i] * z[t][i]
-            model += v[t][i] <= d[t, i].item() * (1 - z[t][i])
-    
-    # Solve and retrieve solution
-    model.solve()
-    orders = np.array([[q[t][p].varValue for p in range(n_prods)] for t in range(T)])
-    
-    return orders, LpStatus[model.status]
-
-
-
-def solve_MILP_CBC(d, alpha, u, o, n_threads=40):
-    """Helper function that solves the mixed-integer linear program (MILP) 
-    of the multi-product newsvendor problem under substitution.
+    """ helper function that solves the mixed-integer linear program (MILP) of the multi-product newsvendor problem under substitution (cf. slides)
     
     Parameters
     -----------
@@ -241,6 +221,8 @@ def solve_MILP_CBC(d, alpha, u, o, n_threads=40):
         underage costs, shape (1, N_PRODUCTS)
     o : np.array
         overage costs, shape (1, N_PRODUCTS)
+    n_prods : int
+        number of products
     n_threads : int
         number of threads
 
@@ -248,52 +230,246 @@ def solve_MILP_CBC(d, alpha, u, o, n_threads=40):
     ----------
     orders: np.array
         Optimal orders, of shape (1, N_PRODUCTS)
-    status : str
-        CBC status code
+    model.status : int
+        Gurobi status code (see https://www.gurobi.com/documentation/current/refman/optimization_status_codes.html)
     """
     u = u.T
     o = o.T
 
-    # Extract dimensions
-    n_prods = d.shape[1]  # Number of products
-    hist = d.shape[0]  # number of demand samples
+    hist = d.shape[0] # number of demand samples 
 
     # compute upper bounds M
     d_min = np.min(d, axis=0)
     d_max = d + np.matmul(d, alpha)
-    M = np.array(np.max(d_max, axis=0)[0] - d_min)
+    M = np.array(np.max(d_max, axis=0)[0]-d_min)
 
-    # initialize model
-    model = LpProblem("MultiProductNewsvendor", LpMaximize)
+    # intialize model, disable console logging and set number of threads
+    model = gp.Model()
+    model.Params.LogToConsole = 0
+    model.Params.Threads = n_threads
 
     # initialize model variables
-    z = {(t, i): LpVariable(f"z_{t}_{i}", cat=LpBinary) for t in range(hist) for i in range(n_prods)}
-    q = {i: LpVariable(f"q_{i}", lowBound=0) for i in range(n_prods)}
-    y = {(t, i): LpVariable(f"y_{t}_{i}", lowBound=0) for t in range(hist) for i in range(n_prods)}
-    v = {(t, i): LpVariable(f"v_{t}_{i}", lowBound=0) for t in range(hist) for i in range(n_prods)}
+    z = model.addVars(hist, n_prods, vtype=GRB.BINARY)
+    q = model.addVars(n_prods)
+    y = model.addVars(hist, n_prods)
+    v = model.addVars(hist, n_prods)
 
     # objective function
-    obj = lpSum(u[0, i].item() * q[i] for i in range(n_prods))
-    obj -= lpSum((u[0, i].item() + o[0, i].item()) / hist * y[t, i] for t in range(hist) for i in range(n_prods))
-    model += obj
+    obj = gp.LinExpr()
+    for i in range(n_prods):
+        obj += u[0, i].item()*q[i]
+        for t in range(hist):
+            obj -= (u[0, i].item()+o[0, i].item()) / hist * y[t, i]
+    model.setObjective(obj, GRB.MAXIMIZE)
 
     # constraints
     for i in range(n_prods):
         for t in range(hist):
-            model += y[t, i] >= q[i] - d[t, i].item() - lpSum(alpha[j, i] * v[t, j] for j in range(n_prods))
-            model += v[t, i] <= d[t, i].item() - q[i] + M[i] * z[t, i]
-            model += v[t, i] >= d[t, i].item() - q[i] - M[i] * z[t, i]
-            model += v[t, i] <= d[t, i].item() * (1 - z[t, i])
+            model.addConstr(y[t, i]>=q[i]-d[t, i].item()-gp.quicksum(alpha[j, i]*v[t, j] for j in range(n_prods)))
+            model.addConstr(v[t, i]<=d[t, i].item()-q[i]+M[i]*z[t, i])
+            model.addConstr(v[t, i]>=d[t, i].item()-q[i]-M[i]*z[t, i])
+            model.addConstr(v[t, i]<=d[t, i].item()*(1-z[t, i]))
 
-    # solve and retrieve solution using CBC solver
-    solver = PULP_CBC_CMD(threads=n_threads, maxSeconds=7200)
-    model.solve(solver, msg=True)
-
-    orders = np.array([[q[p].varValue for p in range(n_prods)]])
-    
+    # solve and retrieve solution
+    model.optimize()
+    orders = np.array([[q[p].x for p in range(n_prods)]])
     return orders, model.status
 
+def solve_MILP_1(d, alpha, u, o, n_threads=1):
 
+    """ helper function that solves the mixed-integer linear program (MILP) of the multi-product newsvendor problem under substitution (cf. slides)
+    
+    Parameters
+    -----------
+    d : np.array
+        Demand samples of shape (T, N_PRODUCTS), where T denotes the number of samples
+    alpha : np.array
+        Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
+    u : np.array
+        underage costs, shape (1, N_PRODUCTS)
+    o : np.array
+        overage costs, shape (1, N_PRODUCTS)
+
+    n_threads : int
+        number of threads
+
+    Returns
+    ----------
+    orders: np.array
+        Optimal orders, of shape (1, N_PRODUCTS)
+    model.status : int
+        Gurobi status code (see https://www.gurobi.com/documentation/current/refman/optimization_status_codes.html)
+    """
+    u = u.T
+    o = o.T
+
+    n_prods = d.size # number of products
+    hist = 1 #d.shape[0] # number of demand samples 
+
+    # compute upper bounds M
+    d_min = np.min(d, axis=0)
+    d_max = d + np.matmul(d, alpha)
+    M = np.array(np.max(d_max, axis=0)[0]-d_min)
+
+    # intialize model, disable console logging and set number of threads
+    model = gp.Model()
+    model.Params.LogToConsole = 0
+    model.Params.Threads = n_threads
+
+    # initialize model variables
+    z = model.addVars(hist, n_prods, vtype=GRB.BINARY)
+    q = model.addVars(n_prods)
+    y = model.addVars(hist, n_prods)
+    v = model.addVars(hist, n_prods)
+
+    # objective function
+    obj = gp.LinExpr()
+    for i in range(n_prods):
+        obj += u[0, i].item()*q[i]
+        for t in range(hist):
+            obj -= (u[0, i].item()+o[0, i].item()) / hist * y[t, i]
+    model.setObjective(obj, GRB.MAXIMIZE)
+
+    # constraints
+    for i in range(n_prods):
+        for t in range(hist):
+            model.addConstr(y[t, i]>=q[i]-d[t, i].item()-gp.quicksum(alpha[j, i]*v[t, j] for j in range(n_prods)))
+            model.addConstr(v[t, i]<=d[t, i].item()-q[i]+M[i]*z[t, i])
+            model.addConstr(v[t, i]>=d[t, i].item()-q[i]-M[i]*z[t, i])
+            model.addConstr(v[t, i]<=d[t, i].item()*(1-z[t, i]))
+
+    # solve and retrieve solution
+    model.optimize()
+    orders = np.array([[q[p].x for p in range(n_prods)]])
+    return orders, model.status
+
+def solve_complex_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, alpha, scenario_size = 10, n_threads=40):
+
+    # Initialize an empty list to store the final order quantities
+    final_order_quantities_parametric = []
+    final_order_quantities_non_parametric = []
+
+    forecast_error = y_train - y_train_pred     #  (T,n)
+    forecast_error_std = forecast_error.std(axis=0) # (n,)
+
+    # Loop over each week in data_test
+    for row in y_test_pred: # row (n,)
+
+        # Initialize arrays of shape (scenario_size, n)
+        demand_scenarios_parametric = np.zeros((scenario_size, len(row)))
+        demand_scenarios_non_parametric = np.zeros((scenario_size, len(row)))
+
+        # Fill the arrays
+        for i in range(scenario_size):
+            demand_scenarios_parametric[i] = row + np.random.normal(loc=0, scale=forecast_error_std)
+            random_row = forecast_error[np.random.randint(forecast_error.shape[0])]
+            demand_scenarios_non_parametric[i] = row + random_row
+
+        # Initialize a list to store the solutions for each scenario
+        number_products= len(row)
+        saa_solutions_p = []
+        saa_solutions_np = []
+        
+        # For each demand scenario, solve the newsvendor problem
+        for demand in demand_scenarios_parametric:
+            # Calculate the solution for this scenario
+            demand = demand.reshape(1,-1)
+            solution, status = solve_MILP(d=demand, alpha=alpha, u=u, o=o, n_prods=number_products, n_threads=n_threads)
+            # Store the solution for this scenario
+            saa_solutions_p.append(solution)
+
+        for demand in demand_scenarios_non_parametric:
+            # Calculate the solution for this scenario
+            demand = demand.reshape(1,-1)
+            solution, status = solve_MILP(d=demand, alpha=alpha, u=u, o=o, n_prods=number_products, n_threads=n_threads)
+            # Store the solution for this scenario
+            saa_solutions_np.append(solution)
+        
+        # Average the solutions to get the final allocation
+        final_allocation_p = np.mean(saa_solutions_p, axis=0)
+        final_allocation_np = np.mean(saa_solutions_np, axis=0)
+
+        # Store the final order quantities
+        final_order_quantities_parametric.append(final_allocation_p)
+        final_order_quantities_non_parametric.append(final_allocation_np)
+
+    return final_order_quantities_parametric, final_order_quantities_non_parametric
+
+def solve_basic_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, scenario_size = 10, n_threads=40):
+    """Solve the basic newsvendor problem in a parametric and a non-parametric way.
+
+    Parameters
+    ----------
+    y_train : np.array
+        Demand data for training, shape (T, N_PRODUCTS)
+    y_train_pred : np.array
+        Demand predictions for training, shape (T, N_PRODUCTS)
+    y_test_pred : np.array
+        Demand predictions for testing, shape (T, N_PRODUCTS)
+    u : np.array
+        Underage costs, shape (1, N_PRODUCTS)
+    o : np.array
+        Overage costs, shape (1, N_PRODUCTS)
+    scenario_size : int
+        Number of scenarios to sample for the approaches
+    n_threads : int
+        Number of threads for the optimization
+
+    Returns
+    ----------
+    final_order_quantities_parametric : np.array
+        Final order quantities for each week in data_test, parametric approach
+    final_order_quantities_non_parametric : np.array
+        Final order quantities for each week in data_test, non-parametric approach
+    """
+
+    critical_ratio = u / (u + o)
+    
+     # Initialize an empty list to store the final order quantities
+    final_order_quantities_parametric = []
+    final_order_quantities_non_parametric = []
+
+    forecast_error = y_train - y_train_pred     #  (T,n)
+    forecast_error_std = forecast_error.std(axis=0) # (n,)
+  
+    
+    # Flatten the forecast_error
+    forecast_error_flattened = np.ravel(forecast_error)
+
+    # Loop over each week in data_test
+    for i in range(len(y_test_pred)):
+
+        # Create Demand Scenarios for this week
+        demand_scenarios_parametric = y_test_pred[i] + np.random.normal(loc=0, scale=forecast_error_std, size=scenario_size)
+        
+        demand_scenarios_non_parametric = y_test_pred[i] + np.random.choice(forecast_error_flattened, size=scenario_size) 
+
+        # Initialize a list to store the solutions for each scenario
+        saa_solutions_p = []
+        saa_solutions_np = []
+
+        # For each demand scenario, solve the newsvendor problem
+        for demand in demand_scenarios_parametric:
+            # Calculate the solution for this scenario
+            solution = norm.ppf(critical_ratio,loc=demand,scale=forecast_error_std)
+            # Store the solution for this scenario
+            saa_solutions_p.append(solution)
+
+        for demand in demand_scenarios_non_parametric:
+            # Calculate the solution for this scenario
+            solution = norm.ppf(critical_ratio,loc=demand,scale=forecast_error_std)
+            # Store the solution for this scenario
+            saa_solutions_np.append(solution)
+
+        # Average the solutions to get the final allocation
+        final_allocation_p = np.mean(saa_solutions_p, axis=0)
+        final_allocation_np = np.mean(saa_solutions_np, axis=0)
+
+        # Store the final order quantities
+        final_order_quantities_parametric.append(final_allocation_p)
+        final_order_quantities_non_parametric.append(final_allocation_np)
+
+    return final_order_quantities_parametric, final_order_quantities_non_parametric
 
 ######################### Neural Network Functions ######################################################################
 
@@ -340,7 +516,7 @@ def make_nvp_loss(underage, overage):
     
     return nvp_loss
 
-def create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed=42): 
+def create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, custom_loss, output_shape, seed=42): 
         """ Build a neural network model with the specified architecture and hyperparameters """
         model = Sequential()
         model.add(Input(shape=(input_shape,)))
@@ -351,7 +527,7 @@ def create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate,
         tf.random.set_seed(seed)
         np.random.seed(seed)
         optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
-        model.compile(loss=loss, optimizer=optimizer)
+        model.compile(loss=custom_loss, optimizer=optimizer, metrics=None)
         return model
 
 def create_NN_multi(n_hidden, n_neurons, activation, input_shape, learning_rate, output_shape, seed=42):
@@ -361,36 +537,40 @@ def create_NN_multi(n_hidden, n_neurons, activation, input_shape, learning_rate,
 
 def create_NN_single(n_hidden, n_neurons, activation, input_shape, learning_rate, output_shape, seed=42):
     global alpha, underage, overage
-    loss = make_nvp_loss(underage, overage)
+    loss = make_nvp_loss(underage=underage, overage=overage)
     return create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed)
 
 def create_NN_basic(n_hidden, n_neurons, activation, input_shape, learning_rate, output_shape, seed=42):
     loss = tf.keras.losses.MeanSquaredError()
+    get_custom_objects().update({'custom_loss': loss})
     return create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed)
 
+def tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_input, underage_input, overage_input, patience=10, multi=True, integrated=True, verbose=0, seed=42, threads=40, trials=100):
 
-def tune_NN_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, overage_input, patience=10, multi=True, integrated=True, verbose=0, seed=42):
-
-    """ Train a network on the given training data with hyperparameter tuning
+    """ Tune a neural network model on the given training data with early stopping using Optuna.
     
     Parameters
     --------------
     X_train : np.array
-        training feature data
+        training feature data (samples, features)
     y_train : np.array
-        training targets
-    X_train : np.array
-        validation feature data
-    y_train : np.array
-        validation targets
-    alpha : np.array
+        training targets (samples, N_PRODUCTS)
+    X_val : np.array
+        validation feature data (samples, features)
+    y_val : np.array
+        validation targets (samples, N_PRODUCTS)
+    alpha_input : np.array
         Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
-    u : np.array
+    underage_input : np.array
         underage costs, shape (1, N_PRODUCTS)
-    o : np.array
-        overage costs, shape (1, N_PRODUCTS)
+    overage_input : np.array
+        overage costs, shape (1, N_PRODUCTS)    
     patience : int
-        number of epochs without improvement before stopping training
+        number of epochs without improvement before stopping
+    multi : bool
+        if True, all products are considered, if False, only product 1 is considered
+    integrated : bool
+        if True, the optimization is integrated, if False, the optimization is separate
     verbose : int
         keras' verbose parameter for silent / verbose model training
     seed : int
@@ -398,80 +578,23 @@ def tune_NN_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, o
 
     Returns
     ----------
-    model : keras model
-        Final model
-    hp : list or tupl
-        hyperparameters in the following order: hidden_nodes, lr, max_epochs, patience, batch_size
-    val_profit : float
-        Mean profit on the validation set
+    best_estimator : keras model
+        Best model found by Optuna
+    hyperparameter : list
+        Best hyperparameters found by Optuna
+    study.best_value : float
+        Best profit found by Optuna
     """
+
     global alpha, underage, overage
-    alpha = alpha_input
+    if alpha_input is not None:
+        alpha = alpha_input
     underage = underage_input
     overage = overage_input
 
-    output_shape = y_train.shape[1]
-    input_shape = X_train.shape[1]
-
-    # create a neural network model with basic hyperparameters
-    early_stopping = EarlyStopping(monitor='val_loss', patience=patience)
-
-    # construct loss function based on the number of products
-    if not integrated:
-        model_ANN = KerasRegressor(model=create_NN_basic, n_hidden=1,n_neurons=30, activation = 'relu',
-                                input_shape=input_shape, learning_rate=0.01, output_shape=output_shape, 
-                                seed = seed, verbose=verbose, callbacks=[early_stopping])
-    elif not multi and integrated:
-        model_ANN = KerasRegressor(model=create_NN_single, n_hidden=1,n_neurons=30, activation = 'relu',
-                               input_shape=input_shape, learning_rate=0.01, output_shape=output_shape, 
-                               seed = seed, verbose=verbose, callbacks=[early_stopping])
-
-    elif multi and integrated: 
-        model_ANN = KerasRegressor(model=create_NN_multi, n_hidden=1,n_neurons=30, activation = 'relu',
-                               input_shape=input_shape, learning_rate=0.01, output_shape=output_shape, 
-                               seed = seed, verbose=verbose, callbacks=[early_stopping])
-    else:
-        raise ValueError('Invalid Configuration')
+    output_shape = y_train.shape[1] #N_PRODUCTS
+    input_shape = X_train.shape[1] #N_FEATURES
     
-
-    
-    # define the hyperparameters space
-    param_distribs = {
-        "n_hidden": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        "n_neurons": np.arange(1, 30),
-        "learning_rate": [0.01,0.001,0.0001,0.00001],
-        "batch_size": [16, 32, 64, 128],
-        "epochs": [10, 20, 30, 40, 50],
-        "activation": ['relu', 'sigmoid', 'tanh']
-    }
-
-    # perform GridSearch for hyperparameter tuning
-    random_CV = RandomizedSearchCV(model_ANN, param_distribs, n_iter=100, cv=3, scoring='neg_mean_squared_error')
-    random_CV_result = random_CV.fit(X_train, y_train, validation_data=(X_val, y_val), verbose=verbose)
-
-    # Get the best parameters and best estimator
-    best_params = random_CV_result.best_params_
-    best_estimator = random_CV_result.best_estimator_
-
-    # make predictions on validation set and compute profits
-    q_val = best_estimator.predict(X_val)
-    val_profit = np.mean(nvps_profit(y_val, q_val, alpha, underage, overage))
-
-    hyperparameter = [best_params['n_hidden'], best_params['n_neurons'],best_params['learning_rate'], 
-                      best_params['epochs'], patience, best_params['batch_size'], best_params['activation']]
-
-    return best_estimator, hyperparameter, val_profit
-
-def tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_input, underage_input, overage_input, patience=10, multi=True, integrated=True, verbose=0, seed=42):
-
-    global alpha, underage, overage
-    alpha = alpha_input
-    underage = underage_input
-    overage = overage_input
-
-    output_shape = y_train.shape[1]
-    input_shape = X_train.shape[1]
-
     def objective(trial):
         # define the hyperparameters space
         n_hidden = trial.suggest_int('n_hidden', 0, 10)
@@ -484,6 +607,7 @@ def tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_input, underage_i
         # create a neural network model with basic hyperparameters
         early_stopping = EarlyStopping(monitor='val_loss', patience=patience)
 
+        
         # construct loss function based on the number of products
         if not integrated:
             model_ANN = KerasRegressor(model=create_NN_basic, n_hidden=n_hidden, n_neurons=n_neurons, activation=activation,
@@ -499,18 +623,25 @@ def tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_input, underage_i
                                 seed=seed, verbose=verbose, callbacks=[early_stopping])
         else:
             raise ValueError('Invalid Configuration')
+        
 
-        pruning_callback = KerasPruningCallback(trial, 'val_loss')
-        model_ANN.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=epochs, batch_size=batch_size, verbose=verbose, callbacks=[pruning_callback])
+        #pruning_callback = KerasPruningCallback(trial, 'val_loss')
+        model_ANN.fit(X_train, y_train, validation_data=(X_val, y_val),  epochs=epochs, batch_size=batch_size, verbose=verbose) #, callbacks=[pruning_callback]
 
         # make predictions on validation set and compute profits
         q_val = model_ANN.predict(X_val)
-        val_profit = np.mean(nvps_profit(y_val, q_val, alpha, underage, overage))
 
-        return val_profit
+        # If integrated, we can use the profit function, 
+        #       otherwise we use the negative absolute error (otherwise we would "cheat")
+        if integrated:
+            result = np.mean(nvps_profit(y_val, q_val, alpha, underage, overage))
+        else:
+            result = -np.abs(np.mean(q_val-y_val))
+
+        return result
 
     study = optuna.create_study(direction='maximize')
-    study.optimize(objective, n_trials=100, n_jobs=40)
+    study.optimize(objective, n_trials=trials, n_jobs=threads)
 
     # Get the best parameters and best estimator
     best_params = study.best_params
@@ -518,9 +649,8 @@ def tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_input, underage_i
 
     hyperparameter = [best_params['n_hidden'], best_params['n_neurons'],best_params['learning_rate'], 
                     best_params['epochs'], patience, best_params['batch_size'], best_params['activation']]
-
+    
     return best_estimator, hyperparameter, study.best_value
-
 
 def train_NN_model(hp, X_train, y_train, X_val, y_val, alpha, underage, overage, multi=True, integrated=True, verbose=0, seed=42):
 
@@ -566,16 +696,15 @@ def train_NN_model(hp, X_train, y_train, X_val, y_val, alpha, underage, overage,
     # extract hyperparameters, build and compile MLP
     hidden_nodes, n_neurons, lr, max_epochs, patience, batch_size, activation = hp
     mlp = create_NN_model(n_hidden=hidden_nodes, n_neurons=n_neurons, activation=activation, 
-                          input_shape=X_train.shape[1], learning_rate=lr, loss=loss, 
+                          input_shape=X_train.shape[1], learning_rate=lr, custom_loss=loss, 
                           output_shape=y_train.shape[1], seed=seed)
 
     # train MLP with early stopping
-    callback = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=patience, restore_best_weights=True)
+    callback = EarlyStopping(monitor='val_loss', patience=patience)
     mlp.fit(X_train, y_train, epochs=max_epochs, batch_size=batch_size, validation_data=(X_val, y_val),
             verbose=verbose, callbacks=[callback])
     
     return mlp
-
 
 ######################### LightGBM Functions ######################################################################
 
