@@ -428,7 +428,8 @@ def solve_basic_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, sc
      # Initialize an empty list to store the final order quantities
     final_order_quantities_parametric = []
     final_order_quantities_non_parametric = []
-
+    y_train = y_train.reshape(-1,1)
+    y_train_pred = y_train_pred.reshape(-1,1)
     forecast_error = y_train - y_train_pred     #  (T,n)
     forecast_error_std = forecast_error.std(axis=0) # (n,)
   
@@ -716,6 +717,8 @@ def gradient(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
     d = y + np.matmul(np.maximum(0, y - predt), alpha)
     u = np.array(underage)
     o = np.array(overage)
+    u = u.T
+    o = o.T
     return (-(u * np.maximum(0,d-predt) - o * np.maximum(0, predt-d))).reshape(y.size)
                 
 def hessian(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
@@ -724,66 +727,100 @@ def hessian(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
 def custom_loss(predt: np.ndarray, dtrain: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     grad = gradient(predt, dtrain)
     hess = hessian(predt, dtrain)
+
     return grad, hess
 
-def newsvendorRMSE(predt: np.ndarray, dtrain: xgb.DMatrix) -> Tuple[str, float]:
-    global alpha
-    y = dtrain.get_label().reshape(predt.shape)
-    d = y + np.matmul(np.maximum(0, y - predt), alpha)
-    v = np.sqrt(np.sum(np.power(d - predt, 2)))
-    return "newsvendorRMSE", v
+def tune_XGB_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, overage_input, patience=10, multi=True, integrated=True, verbose=0, seed=42, threads=40, trials=100):
 
-def tune_XGB_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, overage_input, patience=10, multi=True, integrated=True, verbose=0, seed=42):
+    global alpha, underage, overage
+    if alpha_input is not None:
+        alpha = alpha_input
+    underage = underage_input
+    overage = overage_input
 
     if y_train.shape[1] == 1 and integrated == True:
         multi_strategy = "one_output_per_tree"
-        objective = "reg:quantileerror"
-        quantile = underage_input / (underage_input + overage_input)
+        custom_objective = "reg:quantileerror"
+        quantile = underage / (underage + overage)
     elif y_train.shape[1] != 1 and integrated == True:
-        global alpha, underage, overage
-        alpha = alpha_input
-        underage = underage_input.flatten()
-        overage = overage_input.flatten()
-
         multi_strategy = "multi_output_tree"
-        objective = custom_loss
+        custom_objective = custom_loss
+        quantile = 0
+    elif y_train.shape[1] == 1 and integrated == False:
+        multi_strategy = "one_output_per_tree"
+        custom_objective = 'reg:squarederror'
+        quantile = 0
+    elif y_train.shape[1] != 1 and integrated == False:
+        multi_strategy = "multi_output_tree"
+        custom_objective = "reg:squarederror"
         quantile = 0
     else:
-        multi_strategy = "one_output_per_tree"
-        objective = "reg:squarederror"
-        quantile = 0
+        raise ValueError('Invalid Configuration')
 
 
     X, y = X_train, y_train  
     Xy = xgb.DMatrix(X, label=y)
+    dval = xgb.DMatrix(X_val, label=y_val)
     results = {}
-
     def objective(trial):
-        params = {
-            "tree_method": "hist",
-            "num_target": y.shape[1],
-            "multi_strategy": multi_strategy,
-            "learning_rate": trial.suggest_float("learning_rate", 0.1, 0.5),
-            "max_depth": trial.suggest_int("max_depth", 2, 6),
-            "n_estimators": trial.suggest_int("n_estimators", 100, 140),    #????????
-            "subsample": trial.suggest_float("subsample", 0.3, 0.9),
-            "quantile_alpha": quantile,
-        }
-        booster = xgb.train(
+        if custom_objective != custom_loss:
+            params = {
+                "tree_method": "hist",
+                "num_target": y.shape[1],
+                "multi_strategy": multi_strategy,
+                "learning_rate": trial.suggest_float("learning_rate", 0.1, 0.5),
+                "max_depth": trial.suggest_int("max_depth", 2, 6),
+                "n_estimators": trial.suggest_int("n_estimators", 100, 140),    #????????
+                "subsample": trial.suggest_float("subsample", 0.3, 0.9),
+                "quantile_alpha": quantile,
+                "objective": custom_objective,
+            }
+            booster = xgb.train(
+                params,
+                dtrain=Xy,
+                num_boost_round=128,
+                #obj=custom_objective,
+                evals=[(dval, "val")],
+                evals_result=results,
+                early_stopping_rounds=patience,
+            )
+        else:
+            params = {
+                "tree_method": "hist",
+                "num_target": y.shape[1],
+                "multi_strategy": multi_strategy,
+                "learning_rate": trial.suggest_float("learning_rate", 0.1, 0.5),
+                "max_depth": trial.suggest_int("max_depth", 2, 6),
+                "n_estimators": trial.suggest_int("n_estimators", 100, 140),    #????????
+                "subsample": trial.suggest_float("subsample", 0.3, 0.9),
+                "quantile_alpha": quantile,
+                #"objective": custom_objective,
+            }
+            booster = xgb.train(
             params,
-            dtrain=Xy,
-            num_boost_round=128,
-            obj=custom_loss,
-            evals=[(Xy, "Train")],
-            evals_result=results,
-            custom_metric=newsvendorRMSE
-        )
-        preds = booster.predict(Xy)
-        error = newsvendorRMSE(preds, Xy)[1]  
-        return error
+                dtrain=Xy,
+                num_boost_round=128,
+                obj=custom_objective,
+                evals=[(dval, "val")],
+                evals_result=results,
+                early_stopping_rounds=patience,
+            )
+       
+         # make predictions on validation set and compute profits
+        val_set = xgb.DMatrix(X_val)
+        q_val = booster.predict(val_set)
 
-    study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=100, n_jobs=40)  
+        # If integrated, we can use the profit function, 
+        #       otherwise we use the negative absolute error (otherwise we would "cheat")
+        if integrated:
+            result = np.mean(nvps_profit(y_val, q_val, alpha, underage, overage))
+        else:
+            result = -np.abs(np.mean(q_val-y_val))
+
+        return result
+
+    study = optuna.create_study(direction="maximize")
+    study.optimize(objective, n_trials=trials, n_jobs=threads)  
 
     trial = study.best_trial
     for key, value in trial.params.items():
@@ -793,21 +830,39 @@ def tune_XGB_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, 
     best_params = study.best_trial.params
 
     # Add the fixed parameters
-    best_params.update({
-        "tree_method": "hist",
-        "num_target": y.shape[1],
-        "multi_strategy": "multi_output_tree",
-    })
+    if custom_objective != custom_loss:
+        best_params.update({
+            "tree_method": "hist",
+            "num_target": y.shape[1],
+            "multi_strategy": multi_strategy,
+            "quantile_alpha": quantile,
+            "objective": custom_objective,
+        })
+    else:
+        best_params.update({
+            "tree_method": "hist",
+            "num_target": y.shape[1],
+            "multi_strategy": multi_strategy,
+        })
 
     # Train the final model
-    final_booster = xgb.train(
-        best_params,
-        dtrain=Xy,
-        num_boost_round=128,
-        obj=custom_loss,
-        evals=[(Xy, "Train")],
-        #custom_metric=newsvendorRMSE
-    )
+    if custom_objective != custom_loss:
+        final_booster = xgb.train(
+            best_params,
+            dtrain=Xy,
+            num_boost_round=128,
+            #obj=custom_objective,
+            evals=[(dval, "val")],
+        )
+    else:
+        final_booster = xgb.train(
+            best_params,
+            dtrain=Xy,
+            num_boost_round=128,
+            obj=custom_objective,
+            evals=[(dval, "val")],
+        )
+
 
     return final_booster, best_params, results
 

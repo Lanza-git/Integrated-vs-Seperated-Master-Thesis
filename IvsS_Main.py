@@ -27,8 +27,7 @@ overage_data = costs - salvages
 underage_data_single = underage_data[0,0]
 overage_data_single = overage_data[0,0]
 
-first_element_underage = underage_data[0, 0]
-print(first_element_underage)
+
 
 alpha_data = np.array([             #alpha data
     [0.0, 0.1, 0.05, 0.1, 0.05, 0.1],
@@ -47,9 +46,11 @@ if __name__ == "__main__":
 
     """
     TODOS
-    - IOA complex not working
+    - IOA complex not working - resolved
     - SOA is cheating because of optuna - Resolved: check with Xander
-    - XGBoost
+    - XGBoost - resolved
+    - Baseline - ARMA and ETS
+    
     
     
     """
