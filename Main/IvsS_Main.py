@@ -61,6 +61,14 @@ if __name__ == "__main__":
     multi_data = load_data(path, True)
     multi_feature_data, multi_target_data = preprocess_data(multi_data)
     X_train, y_train, X_val, y_val, X_test, y_test = split_data(multi_feature_data, multi_target_data)
+
+    X_train = X_train[:10]
+    y_train = y_train[:10]
+    X_val = X_val[:2]
+    y_val = y_val[:2]
+
+    X_test = X_test[:2]
+    y_test = y_test[:2]
     
     
     # Integrated Optimization Approach:

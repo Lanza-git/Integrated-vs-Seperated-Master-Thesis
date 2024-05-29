@@ -69,6 +69,7 @@ def load_packages():
     install('gurobipy')
 
     install('tensorflow<2.13')
+    
 
 def create_environment():
     """ Create the environment for the newsvendor problem
@@ -340,7 +341,7 @@ def solve_MILP_1(d, alpha, u, o, n_threads=1):
 
     # solve and retrieve solution
     model.optimize()
-    orders = np.array([[q[p].x for p in range(n_prods)]])
+    orders = np.array([[q[p].X for p in range(n_prods)]])
     return orders, model.status
 
 def solve_complex_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, alpha, scenario_size = 10, n_threads=40):
