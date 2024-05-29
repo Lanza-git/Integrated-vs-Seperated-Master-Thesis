@@ -30,6 +30,7 @@ def load_packages():
     install('pm4py')
     install('tensorflow<2.13')
     install('memory_profiler')
+    
     print("Packages loaded successfully")
     
 
@@ -111,7 +112,7 @@ def create_sequences(data_train, data_val, data_test, n_steps=3):
     remaining_time_test = []
 
     app_ids_train = data_train['case:application'].unique()
-
+    app_ids_train = app_ids_train[:10]
     for app_id in app_ids_train:
         app_data_train = data_train[data_train['case:application'] == app_id]
         app_data_train = app_data_train.sort_values('time:timestamp')
@@ -121,7 +122,7 @@ def create_sequences(data_train, data_val, data_test, n_steps=3):
             remaining_time_train.append(app_data_train.iloc[i+n_steps-1]['remaining_time'])
 
     app_ids_val = data_val['case:application'].unique()
-
+    app_ids_val = app_ids_val[:5]
     for app_id in app_ids_val:
         app_data_val = data_val[data_val['case:application'] == app_id]
         app_data_val = app_data_val.sort_values('time:timestamp')
@@ -131,7 +132,7 @@ def create_sequences(data_train, data_val, data_test, n_steps=3):
             remaining_time_val.append(app_data_val.iloc[i+n_steps-1]['remaining_time'])
 
     app_ids_test = data_test['case:application'].unique()
-
+    app_ids_test = app_ids_test[:5]
     for app_id in app_ids_test:
         app_data_test = data_test[data_test['case:application'] == app_id]
         app_data_test = app_data_test.sort_values('time:timestamp')

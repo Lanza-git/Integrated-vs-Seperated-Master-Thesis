@@ -1,6 +1,6 @@
 from BPM_utils import load_packages, load_pickle_data
 
-#load_packages()
+load_packages()
 
 # Standard library imports
 import pickle
@@ -26,11 +26,6 @@ if __name__ == "__main__":
     X_train, X_val, X_test, y_train, y_val, y_test = create_sequences(train_data, val_data, test_data, 3)
 
     print("Sequences created")
-
-    X_train = X_train[:10]
-    y_train = y_train[:10]
-    X_val = X_val[:2]
-    y_val = y_val[:2]
 
     X_train = np.nan_to_num(X_train)
     y_train = np.nan_to_num(y_train)
