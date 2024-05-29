@@ -1,0 +1,6 @@
+# .gitignore file
+
+BPM/cleaned_data.csv
+BPM/train_val_test.pkl
+BPM/BPI 2018.csv
+BPM/BPI Challenge 2018.xes
