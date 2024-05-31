@@ -406,7 +406,7 @@ def tune_LSTM_model_optuna(X_train, y_train, X_val, y_val, patience=10, verbose=
     return best_model, best_params, best_value
 
 
-def tune_NN_model_optuna(X_train, y_train, X_val, y_val, lstm = False, patience=10, verbose=0, seed=42, threads=40, trials=100):
+def tune_NN_model_optuna(X_train, y_train, X_val, y_val, patience=10, verbose=0, seed=42, threads=40, trials=50):
     """ Tune a neural network model on the given training data with early stopping using Optuna.
     
     Parameters
