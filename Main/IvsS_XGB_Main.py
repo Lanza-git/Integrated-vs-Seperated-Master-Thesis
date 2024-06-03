@@ -1,9 +1,29 @@
-# General imports
-import subprocess
-import sys
+# Load packages
+#from IvsS_Utils import load_packages
+def load_packages():
+    # General imports
+    import subprocess
+    import sys
 
-from IvsS_Utils import load_packages
-load_packages()
+
+    def install(package):
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+    install('pandas')
+    install('scikit-learn')
+    install('scikeras')
+    install('numpy')
+    install('pulp')
+    install('xgboost')
+    install('typing')
+    install('optuna')
+    install('optuna-integration')
+    install('gurobipy')
+    install('statsmodels')
+    install('tensorflow<2.13')
+    install('mpi4py')
+
+load_packages
 
 import numpy as np
 import xgboost as xgb
@@ -44,7 +64,7 @@ if __name__ == "__main__":
     create_environment()
 
     # Decision Tree - Complex
-    path = "data.csv"
+    path = "Main/data.csv"
     multi_data = load_data(path, True)
     multi_feature_data, multi_target_data = preprocess_data(multi_data)
     X_train, y_train, X_val, y_val, X_test, y_test = split_data(multi_feature_data, multi_target_data)

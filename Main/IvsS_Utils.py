@@ -46,30 +46,7 @@ alpha = []
 underage = []
 overage = []
 
-######################## Environment Setup Functions ######################################################################
-
-def load_packages():
-    # General imports
-    import subprocess
-    import sys
-
-
-    def install(package):
-        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-    install('pandas')
-    install('scikit-learn')
-    install('scikeras')
-    install('numpy')
-    install('pulp')
-    install('xgboost')
-    install('typing')
-    install('optuna')
-    install('optuna-integration')
-    install('gurobipy')
-    install('statsmodels')
-    install('tensorflow<2.13')
-    
+######################## Environment Setup Functions #####################################################################    
 
 def create_environment():
     """ Create the environment for the newsvendor problem
@@ -201,6 +178,10 @@ def nvps_profit(demand, q, alpha, u, o):
     """
     if demand.shape[1] == 1:
         q = np.maximum(0., q)
+
+        if len(q.shape) == 1:
+            q = q.reshape(-1, 1)
+
         profits = np.sum(np.minimum(q,demand)*u - np.maximum(demand-q, 0.)*(u)-np.maximum(q-demand, 0.)*(o))
     else:
         q = np.maximum(0., q) # make sure orders are non-negative
@@ -496,10 +477,11 @@ def ets_forecast( y_train, y_val, y_test_length, verbose=0, fit_past = 12*7):
     model_configs = list(itertools.product(error_types, trend_types, damped_trend_types, seasonal_types, seasonal_periods))
 
     fit_past = fit_past # training data size (and number of samples in demand distribution estimate)
-    timesteps = N_TEST # number of predictions timesteps (for our application, one-day-ahead predictions)
+    timesteps = 1 # number of predictions timesteps (for our application, one-day-ahead predictions)
 
+    
+    best_config, best_rmse, best_mape, best_message = None, np.inf, np.inf, None
     best_rmse = np.inf
-    best_config, best_rmse, best_mape, best_message, best_pred = None, np.inf, np.inf, None, None
     results_dct = {}
     
     print('Starting model selection.\n')
@@ -532,11 +514,11 @@ def ets_forecast( y_train, y_val, y_test_length, verbose=0, fit_past = 12*7):
                     print('\n')
                 # after evaluation is completed, compute RMSE and MAPE on validation set
                 target_val = target[N_TRAIN:N_TRAIN+N_VAL]
-                rmse = np.sqrt( np.mean( (preds-target_val)**2 ) )
-
+                print(y_val.shape, target_val.shape, preds.shape)
                 # Ensure preds and target_val have the same shape
                 assert preds.shape == target_val.shape, "preds and target_val must have the same shape"
-                # Now you can calculate mape
+
+                rmse = np.sqrt( np.mean( (preds-target_val)**2 ) )
                 mape = np.mean( abs(preds[target_val>0]-target_val[target_val>0]) / target_val[target_val>0] )
 
                 message = 'success'
