@@ -71,7 +71,7 @@ if __name__ == "__main__":
     #load_packages()
     create_environment()
 
-    path = "Main/data.csv" #/pfs/data5/home/ma/ma_ma/ma_elanza/test_dir/
+    path = "pfs/data5/home/ma/ma_ma/ma_elanza/test_dir/data.csv" # "Main/data.csv" 
 
     trials = 10
 
