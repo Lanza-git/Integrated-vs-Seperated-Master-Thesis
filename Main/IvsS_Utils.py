@@ -733,30 +733,60 @@ def make_nvp_loss(underage, overage):
     return nvp_loss
 
 def create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, custom_loss, output_shape, seed=42): 
-    """ Build a neural network model with the specified architecture and hyperparameters     """
+    """ Build a neural network model with the specified architecture and hyperparameters    
+    
+    Parameters
+    --------
+    n_hidden : int
+        number of hidden layers
+    n_neurons : int
+        number of neurons per hidden layer
+    activation : str
+        activation function
+    input_shape : int
+        number of features
+    learning_rate : float
+        learning rate
+    custom_loss : function
+        custom loss function
+    output_shape : int
+        number of products
+    seed : int
+        random seed
+
+    Returns
+    --------
+    model : keras model
+        Neural network model
+    """
+    # set seed for reproducability
+    tf.random.set_seed(seed)
+    np.random.seed(seed)
+
+    # define the model
     model = Sequential()
     model.add(Input(shape=(input_shape,)))
     for layer in range(n_hidden):
         model.add(Dense(n_neurons, activation=activation))
     model.add(Dense(output_shape))
-    # set seed for reproducability
-    tf.random.set_seed(seed)
-    np.random.seed(seed)
     optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
     model.compile(loss=custom_loss, optimizer=optimizer, metrics=None)
     return model
 
 def create_NN_multi(n_hidden, n_neurons, activation, input_shape, learning_rate, output_shape, seed=42):
+    """ Create a neural network model for the multi-product newsvendor problem under substitution"""
     global alpha, underage, overage
     loss = make_nvps_loss(alpha=alpha, underage=underage, overage=overage)
     return create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed)
 
 def create_NN_single(n_hidden, n_neurons, activation, input_shape, learning_rate, output_shape, seed=42):
+    """ Create a neural network model for the single-product newsvendor problem without substitution"""
     global alpha, underage, overage
     loss = make_nvp_loss(underage=underage, overage=overage)
     return create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed)
 
 def create_NN_basic(n_hidden, n_neurons, activation, input_shape, learning_rate, output_shape, seed=42):
+    """ Create a neural network model without a custom loss function"""
     loss = tf.keras.losses.MeanSquaredError()
     get_custom_objects().update({'custom_loss': loss})
     return create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed)
@@ -800,16 +830,18 @@ def tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_input, underage_i
     study.best_value : float
         Best profit found by Optuna
     """
-    
+    # Load problem information
     global alpha, underage, overage
     if alpha_input is not None:
         alpha = alpha_input
     underage = underage_input
     overage = overage_input
 
+    # define dimensions
     output_shape = y_train.shape[1] #N_PRODUCTS
     input_shape = X_train.shape[1] #N_FEATURES
     
+    # Optuna hyperparameter optimization
     def objective(trial):
         # define the hyperparameters space
         n_hidden = trial.suggest_int('n_hidden', 0, 10)
@@ -854,14 +886,12 @@ def tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_input, underage_i
             result = -np.abs(np.mean(q_val-y_val))
 
         return result
-
     study = optuna.create_study(direction='maximize')
     study.optimize(objective, n_trials=trials, n_jobs=threads)
 
     # Get the best parameters and best estimator
     best_params = study.best_params
     best_estimator = None
-
     hyperparameter = [best_params['n_hidden'], best_params['n_neurons'],best_params['learning_rate'], 
                     best_params['epochs'], patience, best_params['batch_size'], best_params['activation']]
     
@@ -923,6 +953,7 @@ def train_NN_model(hp, X_train, y_train, X_val, y_val, alpha, underage, overage,
 ######################### LightGBM Functions ######################################################################
 
 def gradient(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
+    
     if isinstance(dtrain, np.ndarray):
         dtrain = xgb.DMatrix(dtrain)
     global alpha, underage, overage
@@ -944,7 +975,7 @@ def custom_loss(predt: np.ndarray, dtrain: np.ndarray) -> Tuple[np.ndarray, np.n
     return grad, hess
 
 def tune_XGB_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, overage_input, patience=10, multi=True, integrated=True, verbose=0, seed=42, threads=40, trials=100):
-
+    
     global alpha, underage, overage
     if alpha_input is not None:
         alpha = alpha_input
@@ -970,9 +1001,13 @@ def tune_XGB_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, 
     else:
         raise ValueError('Invalid Configuration')
 
-
+    print("Test - memory")
     X, y = X_train, y_train  
+    print(np.isnan(X).any())
+    print(np.isnan(y).any())
     Xy = xgb.DMatrix(X, label=y)
+    print(np.isnan(X_val).any())
+    print(np.isnan(y_val).any())
     dval = xgb.DMatrix(X_val, label=y_val)
     results = {}
     def objective(trial):
@@ -983,9 +1018,9 @@ def tune_XGB_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, 
                 "multi_strategy": multi_strategy,
                 "learning_rate": trial.suggest_float("learning_rate", 0.1, 0.5),
                 "max_depth": trial.suggest_int("max_depth", 2, 6),
-                "n_estimators": trial.suggest_int("n_estimators", 100, 140),    #????????
                 "subsample": trial.suggest_float("subsample", 0.3, 0.9),
                 "quantile_alpha": quantile,
+                "verbosity:": verbose,
                 "objective": custom_objective,
             }
             booster = xgb.train(
@@ -996,6 +1031,7 @@ def tune_XGB_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, 
                 evals=[(dval, "val")],
                 evals_result=results,
                 early_stopping_rounds=patience,
+                verbose_eval=verbose                
             )
         else:
             params = {
@@ -1007,6 +1043,7 @@ def tune_XGB_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, 
                 "n_estimators": trial.suggest_int("n_estimators", 100, 140),    #????????
                 "subsample": trial.suggest_float("subsample", 0.3, 0.9),
                 "quantile_alpha": quantile,
+                "verbosity:": verbose,
                 #"objective": custom_objective,
             }
             booster = xgb.train(
@@ -1017,6 +1054,7 @@ def tune_XGB_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, 
                 evals=[(dval, "val")],
                 evals_result=results,
                 early_stopping_rounds=patience,
+                verbose_eval=verbose
             )
        
          # make predictions on validation set and compute profits
@@ -1050,12 +1088,14 @@ def tune_XGB_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, 
             "multi_strategy": multi_strategy,
             "quantile_alpha": quantile,
             "objective": custom_objective,
+            "verbosity:": verbose,
         })
     else:
         best_params.update({
             "tree_method": "hist",
             "num_target": y.shape[1],
             "multi_strategy": multi_strategy,
+            "verbosity": verbose,
         })
 
     # Train the final model
@@ -1066,6 +1106,7 @@ def tune_XGB_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, 
             num_boost_round=128,
             #obj=custom_objective,
             evals=[(dval, "val")],
+            verbose_eval=verbose
         )
     else:
         final_booster = xgb.train(
@@ -1074,6 +1115,7 @@ def tune_XGB_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, 
             num_boost_round=128,
             obj=custom_objective,
             evals=[(dval, "val")],
+            verbose_eval=verbose
         )
 
 

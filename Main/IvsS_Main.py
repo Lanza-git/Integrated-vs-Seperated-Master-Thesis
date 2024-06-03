@@ -91,6 +91,7 @@ if __name__ == "__main__":
     multi_feature_data, multi_target_data = preprocess_data(raw_data=multi_data)
     X_train, y_train, X_val, y_val, X_test, y_test = split_data(feature_data=multi_feature_data, target_data=multi_target_data, test_size=0.2, val_size=0.2)
     
+    
     # Baseline - ETS
     results_dct, elapse_time = ets_forecast(y_train=y_train, y_val=y_val, y_test_length=y_test.shape[0], fit_past=10)
     profit_single_ets, profit_multi_ets = ets_evaluate(y_test=y_test, results_dct=results_dct, underage=underage_data, overage=overage_data, alpha=alpha_data)
@@ -111,16 +112,21 @@ if __name__ == "__main__":
     model_ANN_complex = train_NN_model(hp=hyperparameter, X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha=alpha_data, underage=underage_data, overage=overage_data, multi = True,  integrated = False)
     target_prediction_ANN = model_ANN_complex.predict(X_test)
     train_prediction_ANN = model_ANN_complex.predict(X_train)
+    print("ann prediction - complete")
     orders_scp_ann, orders_scnp_ann = solve_complex_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN, u=underage_data, o=overage_data, alpha=alpha_data)
+    print("order allocation - complete")
     profit_scp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_scp_ann, alpha=alpha_data, u=underage_data, o=overage_data))
     profit_scnp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_scnp_ann, alpha=alpha_data, u=underage_data, o=overage_data))
     
     print("Step 2")
-
+    
     # Integrated Optimization Approach - XGBoost - Complex:
-    xgb_model, params, results = tune_XGB_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
+    xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data, integrated=True, trials=trials)
+    print("xgb model trained")
     xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
-    profit_complex_XGB_IOA = np.mean(nvps_profit(y_test, xgb_result, alpha_data, underage_data, overage_data))
+    print("xgb predicted")
+    print(np.isnan(X_test).any())
+    profit_complex_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result, alpha=alpha_data, u=underage_data, o=overage_data))
     
     print("profit complex", profit_complex_XGB_IOA)
     
