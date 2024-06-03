@@ -41,6 +41,9 @@ from scipy.stats import norm
 
 import os
 from keras.utils import get_custom_objects
+import datetime
+from statsmodels.tsa.exponential_smoothing.ets import ETSModel
+import itertools
 
 alpha = []
 underage = []
@@ -49,12 +52,8 @@ overage = []
 ######################## Environment Setup Functions #####################################################################    
 
 def create_environment():
-    """ Create the environment for the newsvendor problem
-    
-    Returns
-    ---------
-    None
-    """
+    """ Create the environment for the newsvendor problem"""
+
     # Set the environment variables for Gurobi
     os.environ['GRB_LICENSE_FILE'] = '/pfs/data5/home/ma/ma_ma/ma_elanza/test_dir/gurobi.lic'
     #os.environ['TF_ENABLE_ONEDNN_OPTS']=0
@@ -63,7 +62,6 @@ def create_environment():
 ######################## Data Handling Functions ############################################################
 
 def load_data(path, multi=False):
-
     """ Load  data for the newsvendor problem from specified location 
 
     Parameters
@@ -75,7 +73,6 @@ def load_data(path, multi=False):
     Returns
     ---------
     raw_data : np.array
-
     """ 
     # Load Data
     raw_data = pd.read_csv(path)    
@@ -88,7 +85,6 @@ def load_data(path, multi=False):
     return raw_data
 
 def preprocess_data(raw_data):
-
     """ Preprocess the data for the newsvendor problem
     
     Parameters
@@ -97,11 +93,13 @@ def preprocess_data(raw_data):
 
     Returns
     ---------
-    feature_data, target_data: pd.dataframe
-    
+    feature_data: pd.dataframe
+        data with only features
+    target_data: pd.dataframe
+        data with only target
     """
 
-        # Split the data into feature and target data
+    # Split the data into feature and target data
     feature_columns = raw_data.columns[raw_data.columns.str.contains('demand') == False]
     feature_data = raw_data[feature_columns]
     target_columns = raw_data.columns[raw_data.columns.str.contains('demand')]
@@ -132,6 +130,34 @@ def preprocess_data(raw_data):
     return feature_data, target_data
 
 def split_data(feature_data, target_data, test_size=0.2, val_size=0.2):
+    """ Split the data into training, validation and test sets
+
+    Parameters
+    ---------
+    feature_data : np.array
+        data with only features
+    target_data : np.array
+        data with only target
+    test_size : float
+        proportion of the dataset to include in the test split
+    val_size : float
+        proportion of the dataset to include in the validation split
+
+    Returns
+    ---------
+    X_train : np.array
+        training feature data
+    y_train : np.array
+        training target data
+    X_val : np.array
+        validation feature data
+    y_val : np.array
+        validation target data
+    X_test : np.array
+        test feature data
+    y_test : np.array
+        test target data
+    """
     # First, split the data into training+validation set and test set
     X_train_val, X_test, y_train_val, y_test = train_test_split(feature_data, target_data, test_size=test_size, random_state=42)
 
@@ -159,7 +185,6 @@ def split_data(feature_data, target_data, test_size=0.2, val_size=0.2):
 ######################### Newsvendor related Functions ########################################################
 
 def nvps_profit(demand, q, alpha, u, o):
-
     """ Profit function of the newsvendor under substitution
     
     Parameters
@@ -190,7 +215,6 @@ def nvps_profit(demand, q, alpha, u, o):
     return profits
 
 def solve_MILP(d, alpha, u, o, n_prods, n_threads=1):
-
     """ helper function that solves the mixed-integer linear program (MILP) of the multi-product newsvendor problem under substitution (cf. slides)
     
     Parameters
@@ -326,7 +350,34 @@ def solve_MILP_1(d, alpha, u, o, n_threads=1):
     return orders, model.status
 
 def solve_complex_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, alpha, scenario_size = 10, n_threads=40):
+    """Solve the complex newsvendor problem in a parametric and a non-parametric way.
 
+    Parameters
+    ----------
+    y_train : np.array
+        Demand data for training, shape (T, N_PRODUCTS)
+    y_train_pred : np.array
+        Demand predictions for training, shape (T, N_PRODUCTS)
+    y_test_pred : np.array
+        Demand predictions for testing, shape (T, N_PRODUCTS)
+    u : np.array
+        Underage costs, shape (1, N_PRODUCTS)
+    o : np.array
+        Overage costs, shape (1, N_PRODUCTS)
+    alpha : np.array
+        Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
+    scenario_size : int
+        Number of scenarios to sample for the approaches
+    n_threads : int
+        Number of threads for the optimization
+
+    Returns
+    ----------
+    final_order_quantities_parametric : np.array
+        Final order quantities for each week in data_test, parametric approach
+    final_order_quantities_non_parametric : np.array
+        Final order quantities for each week in data_test, non-parametric approach
+    """
     # Initialize an empty list to store the final order quantities
     final_order_quantities_parametric = []
     final_order_quantities_non_parametric = []
@@ -457,12 +508,28 @@ def solve_basic_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, sc
 ############################### ETS Functions ###########################################################################
 
 def ets_forecast( y_train, y_val, y_test_length, verbose=0, fit_past = 12*7):
+    """Forecast the demand using the ETS model
 
-    import datetime
-    from statsmodels.tsa.exponential_smoothing.ets import ETSModel
-    import numpy as np
-    import itertools
+    Parameters
+    ----------
+    y_train : np.array
+        Demand data for training, shape (T, N_PRODUCTS)
+    y_val : np.array
+        Demand data for validation, shape (T, N_PRODUCTS)
+    y_test_length : int
+        Number of samples in the test set
+    verbose : int
+        Verbosity level
+    fit_past : int
+        Number of samples in the demand distribution estimate
 
+    Returns
+    ----------
+    results_dct : dict
+        Dictionary containing the results for each product
+    elapsed : float
+        Elapsed time
+    """
     N_PRODUCTS = y_train.shape[1] # number of products
     N_TRAIN = y_train.shape[0] # number of training samples
     N_VAL = y_val.shape[0] # number of validation samples
@@ -551,7 +618,30 @@ def ets_forecast( y_train, y_val, y_test_length, verbose=0, fit_past = 12*7):
     return results_dct, elapsed
 
 def ets_evaluate(y_test, results_dct, underage, overage, alpha, verbose=0):
+    """Evaluate the ETS model
 
+    Parameters
+    ----------
+    y_test : np.array
+        Demand data for testing, shape (T, N_PRODUCTS)
+    results_dct : dict
+        Dictionary containing the results for each product
+    underage : np.array
+        Underage costs, shape (1, N_PRODUCTS)
+    overage : np.array
+        Overage costs, shape (1, N_PRODUCTS)
+    alpha : np.array
+        Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
+    verbose : int
+        Verbosity level
+
+    Returns
+    ----------
+    profit_ets_single : float
+        Profit for the single product case
+    profit_ets_multi : float
+        Profit for the multi-product case
+    """
     N_PRODUCTS = y_test.shape[1] # number of products
     N_TEST = y_test.shape[0] # number of test samples
 
@@ -578,9 +668,22 @@ def ets_evaluate(y_test, results_dct, underage, overage, alpha, verbose=0):
 ######################### Neural Network Functions ######################################################################
 
 def make_nvps_loss(alpha, underage, overage):
+    """ Create a custom loss function for the newsvendor problem under substitution
+    
+    Parameters
+    ---------
+    alpha : np.array
+        substitution matrix
+    underage : np.array
+        underage costs
+    overage : np.array
+        overage costs
 
-    """ Create a custom loss function for the newsvendor problem under substitution"""
-
+    Returns
+    ---------
+    nvps_loss : function
+        Custom loss function
+    """
     # transofrm the alpha, u, o to tensors
     underage = tf.convert_to_tensor(underage, dtype=tf.float32) #underage costs
     overage = tf.convert_to_tensor(overage, dtype=tf.float32) #overage costs
@@ -606,33 +709,42 @@ def make_nvps_loss(alpha, underage, overage):
     return nvps_loss
 
 def make_nvp_loss(underage, overage):
+    """ Create a custom loss function for the newsvendor problem without substitution
+    
+    Parameters
+    ---------
+    underage : np.array
+        underage costs
+    overage : np.array
+        overage costs
 
-    """ Create a custom loss function for the newsvendor problem without substitution"""
-
+    Returns
+    ---------
+    nvp_loss : function
+        Custom loss function
+    """
     q = underage / (underage + overage)
-
     @tf.autograph.experimental.do_not_convert
     def nvp_loss(y_true, y_pred):
         y_true = tf.cast(y_true, tf.float32)
         y_pred = tf.cast(y_pred, tf.float32)
         error = y_true - y_pred
         return tf.keras.backend.mean(tf.maximum(q*error, (q-1)*error), axis=-1)
-    
     return nvp_loss
 
 def create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, custom_loss, output_shape, seed=42): 
-        """ Build a neural network model with the specified architecture and hyperparameters """
-        model = Sequential()
-        model.add(Input(shape=(input_shape,)))
-        for layer in range(n_hidden):
-            model.add(Dense(n_neurons, activation=activation))
-        model.add(Dense(output_shape))
-        # set seed for reproducability
-        tf.random.set_seed(seed)
-        np.random.seed(seed)
-        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
-        model.compile(loss=custom_loss, optimizer=optimizer, metrics=None)
-        return model
+    """ Build a neural network model with the specified architecture and hyperparameters     """
+    model = Sequential()
+    model.add(Input(shape=(input_shape,)))
+    for layer in range(n_hidden):
+        model.add(Dense(n_neurons, activation=activation))
+    model.add(Dense(output_shape))
+    # set seed for reproducability
+    tf.random.set_seed(seed)
+    np.random.seed(seed)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+    model.compile(loss=custom_loss, optimizer=optimizer, metrics=None)
+    return model
 
 def create_NN_multi(n_hidden, n_neurons, activation, input_shape, learning_rate, output_shape, seed=42):
     global alpha, underage, overage
@@ -650,7 +762,6 @@ def create_NN_basic(n_hidden, n_neurons, activation, input_shape, learning_rate,
     return create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed)
 
 def tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_input, underage_input, overage_input, patience=10, multi=True, integrated=True, verbose=0, seed=42, threads=40, trials=100):
-
     """ Tune a neural network model on the given training data with early stopping using Optuna.
     
     Parameters
@@ -689,7 +800,7 @@ def tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_input, underage_i
     study.best_value : float
         Best profit found by Optuna
     """
-
+    
     global alpha, underage, overage
     if alpha_input is not None:
         alpha = alpha_input
@@ -757,7 +868,6 @@ def tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_input, underage_i
     return best_estimator, hyperparameter, study.best_value
 
 def train_NN_model(hp, X_train, y_train, X_val, y_val, alpha, underage, overage, multi=True, integrated=True, verbose=0, seed=42):
-
     """ Train a network on the given training data with early stopping.
     
     Parameters
