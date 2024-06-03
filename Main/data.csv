@@ -18,3 +18,155 @@ day,month,year,is_holiday,location,temperature,product_1_demand,product_2_demand
 17,1,2020,False,Wesel,7.84,48,33,47,31,35,24
 18,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
 19,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+1,1,2020,True,Spremberg,3.8,54,38,53,35,39,27
+2,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+3,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+4,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+5,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+6,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+7,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+8,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+9,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+10,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+11,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+12,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+13,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+14,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+15,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+16,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+17,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+18,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+19,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+1,1,2020,True,Spremberg,3.8,54,38,53,35,39,27
+2,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+3,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+4,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+5,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+6,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+7,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+8,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+9,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+10,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+11,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+12,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+13,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+14,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+15,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+16,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+17,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+18,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+19,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+1,1,2020,True,Spremberg,3.8,54,38,53,35,39,27
+2,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+3,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+4,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+5,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+6,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+7,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+8,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+9,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+10,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+11,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+12,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+13,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+14,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+15,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+16,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+17,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+18,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+19,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+1,1,2020,True,Spremberg,3.8,54,38,53,35,39,27
+2,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+3,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+4,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+5,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+6,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+7,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+8,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+9,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+10,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+11,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+12,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+13,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+14,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+15,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+16,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+17,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+18,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+19,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+1,1,2020,True,Spremberg,3.8,54,38,53,35,39,27
+2,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+3,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+4,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+5,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+6,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+7,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+8,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+9,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+10,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+11,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+12,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+13,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+14,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+15,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+16,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+17,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+18,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+19,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+1,1,2020,True,Spremberg,3.8,54,38,53,35,39,27
+2,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+3,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+4,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+5,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+6,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+7,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+8,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+9,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+10,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+11,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+12,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+13,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+14,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+15,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+16,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+17,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+18,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+19,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+1,1,2020,True,Spremberg,3.8,54,38,53,35,39,27
+2,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+3,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+4,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+5,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+6,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+7,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+8,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+9,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+10,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+11,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+12,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+13,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+14,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+15,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+16,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+17,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+18,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+19,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+1,1,2020,True,Spremberg,3.8,54,38,53,35,39,27
+2,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+3,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+4,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+5,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+6,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+7,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+8,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+9,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+10,1,2020,False,Spremberg,3.8,41,27,40,25,29,18
+11,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+12,1,2020,False,Recklinghausen,7.36,67,46,65,43,49,33
+13,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23
+14,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+15,1,2020,False,Wolfach,6.59,49,33,48,31,35,24
+16,1,2020,False,Quedlinburg,5.22,54,36,53,33,39,25
+17,1,2020,False,Wesel,7.84,48,33,47,31,35,24
+18,1,2020,False,Schwandorf,5.15,56,37,55,34,40,26
+19,1,2020,False,Rothenburg ob der Tauber,4.79,51,34,50,31,36,23

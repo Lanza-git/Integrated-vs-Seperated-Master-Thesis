@@ -67,7 +67,7 @@ def load_packages():
     install('optuna')
     install('optuna-integration')
     install('gurobipy')
-
+    install('statsmodels')
     install('tensorflow<2.13')
     
 
@@ -429,7 +429,7 @@ def solve_basic_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, sc
      # Initialize an empty list to store the final order quantities
     final_order_quantities_parametric = []
     final_order_quantities_non_parametric = []
-    y_train = y_train.reshape(-1,1)
+    y_train = y_train.reshape(-1,1) 
     y_train_pred = y_train_pred.reshape(-1,1)
     forecast_error = y_train - y_train_pred     #  (T,n)
     forecast_error_std = forecast_error.std(axis=0) # (n,)
@@ -472,6 +472,126 @@ def solve_basic_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, sc
         final_order_quantities_non_parametric.append(final_allocation_np)
 
     return final_order_quantities_parametric, final_order_quantities_non_parametric
+
+############################### ETS Functions ###########################################################################
+
+def ets_forecast( y_train, y_val, y_test_length, verbose=0, fit_past = 12*7):
+
+    import datetime
+    from statsmodels.tsa.exponential_smoothing.ets import ETSModel
+    import numpy as np
+    import itertools
+
+    N_PRODUCTS = y_train.shape[1] # number of products
+    N_TRAIN = y_train.shape[0] # number of training samples
+    N_VAL = y_val.shape[0] # number of validation samples
+    N_TEST = y_test_length # number of test samples
+
+    # build all possible model configs
+    error_types = ['add', 'mul']
+    trend_types = ['add', 'mul', None]
+    damped_trend_types = [True, False]
+    seasonal_types = ['add', 'mul', None]
+    seasonal_periods = [None, 7, 12, 24, 31]  
+    model_configs = list(itertools.product(error_types, trend_types, damped_trend_types, seasonal_types, seasonal_periods))
+
+    fit_past = fit_past # training data size (and number of samples in demand distribution estimate)
+    timesteps = N_TEST # number of predictions timesteps (for our application, one-day-ahead predictions)
+
+    best_rmse = np.inf
+    best_config, best_rmse, best_mape, best_message, best_pred = None, np.inf, np.inf, None, None
+    results_dct = {}
+    
+    print('Starting model selection.\n')
+    elapsed = 0 # elapsed time in seconds
+
+    # loop over products
+    for i in range(N_PRODUCTS):
+        start_i = datetime.datetime.now() # computation start for product i
+        
+        if verbose>0:
+            print('Starting product {}/{}.'.format(i+1, N_PRODUCTS)) # console update
+            
+        results_dct[i] = {} # initialize result dict for product i
+        target = np.append(y_train[:,i], y_val[:, i]) # train and val targets for i
+        
+        # loop through configurations
+        for n_config, config in enumerate(model_configs, 1):
+            if verbose>0:
+                print('Starting config {}/{}.'.format(n_config, len(model_configs))) # console update
+            preds = np.array([]) # variable in which validation set predictions are stored
+            try:
+                # loop through validation timesteps, fit and predict on-day-ahead
+                for t in range(0, N_VAL, timesteps):
+                    model = ETSModel(target[N_TRAIN+t-fit_past:N_TRAIN+t], *config)
+                    model = model.fit()
+                    preds = np.append(preds, np.maximum(0, model.forecast(timesteps)))
+                    if verbose==2:
+                        print(t, end=',') # console update
+                if verbose==2:
+                    print('\n')
+                # after evaluation is completed, compute RMSE and MAPE on validation set
+                target_val = target[N_TRAIN:N_TRAIN+N_VAL]
+                rmse = np.sqrt( np.mean( (preds-target_val)**2 ) )
+
+                # Ensure preds and target_val have the same shape
+                assert preds.shape == target_val.shape, "preds and target_val must have the same shape"
+                # Now you can calculate mape
+                mape = np.mean( abs(preds[target_val>0]-target_val[target_val>0]) / target_val[target_val>0] )
+
+                message = 'success'
+            except Exception as e:
+                rmse, mape = np.inf, np.inf
+                message = e
+                print('Exeption \n', e)
+
+            # If the RMSE is lower than the best RMSE so far, update the best configuration and its results
+            if rmse < best_rmse:
+                best_config = config
+                best_rmse = rmse
+                best_mape = mape
+                best_message = message
+
+
+        # fit the best model on the whole training set and predict for the test set
+        model = ETSModel(target, *best_config)
+        model = model.fit()
+        best_test_pred = model.forecast(N_TEST)
+        
+        results_dct[i] = (best_config, best_rmse, best_mape, best_test_pred, best_message) # save results for product "i" and configuration "config"
+        elapsed_i = (datetime.datetime.now()-start_i).total_seconds() # record time
+        elapsed += elapsed_i
+        if verbose>0:
+            print('Elapsed for product {}/{}: {}.'.format(i+1, N_PRODUCTS, elapsed_i)) # console update
+            print('\n\n')
+    print('Total elapsed: {}.'.format(elapsed))
+
+    return results_dct, elapsed
+
+def ets_evaluate(y_test, results_dct, underage, overage, alpha, verbose=0):
+
+    N_PRODUCTS = y_test.shape[1] # number of products
+    N_TEST = y_test.shape[0] # number of test samples
+
+    test_pred = np.zeros((N_TEST, N_PRODUCTS))  # Assuming N_TEST is the number of test samples
+    
+    for i in range(N_PRODUCTS):
+        test_pred[:, i] = results_dct[i][3]
+
+    y_test_single = y_test[:,0].reshape(-1, 1)
+    test_pred_single = test_pred[:,0].reshape(-1, 1)
+
+    underage_single = underage[0,0]
+    overage_single = overage[0,0]
+
+    profit_ets_single = np.mean(nvps_profit(y_test_single, test_pred_single, None, underage_single, overage_single))
+    profit_ets_multi = np.mean(nvps_profit(y_test, test_pred, alpha, underage, overage))
+
+    return  profit_ets_single, profit_ets_multi
+    
+    
+
+    
 
 ######################### Neural Network Functions ######################################################################
 

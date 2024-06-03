@@ -4,13 +4,14 @@ import sys
 
 from IvsS_Utils import load_packages
 
-load_packages()
+#load_packages()
 
 import numpy as np
 
 # custom functions and constants
 from IvsS_Utils import load_data, preprocess_data, split_data, nvps_profit, solve_MILP, create_environment
 from IvsS_Utils import train_NN_model, tune_NN_model_optuna, solve_basic_newsvendor_seperate, solve_complex_newsvendor_seperate
+from IvsS_Utils import ets_forecast, ets_evaluate
 
 
 ####################################### Constants ##############################################################################
@@ -51,25 +52,30 @@ if __name__ == "__main__":
     - XGBoost - resolved
     - Baseline - ARMA and ETS
     
-    
-    
+       
     """
     
     # Neural network - Complex
-    path = "data.csv"
+    path = "Main/data.csv"
     
     multi_data = load_data(path, True)
     multi_feature_data, multi_target_data = preprocess_data(multi_data)
     X_train, y_train, X_val, y_val, X_test, y_test = split_data(multi_feature_data, multi_target_data)
 
-    X_train = X_train[:10]
-    y_train = y_train[:10]
-    X_val = X_val[:2]
-    y_val = y_val[:2]
+    X_train = X_train[:100]
+    y_train = y_train[:100]
+    X_val = X_val[:20]
+    y_val = y_val[:20]
 
-    X_test = X_test[:2]
-    y_test = y_test[:2]
+    X_test = X_test[:20]
+    y_test = y_test[:20]
+
     
+    # Baseline - ETS
+    results_dct, elapse_time = ets_forecast(y_train=y_train, y_val=y_val, y_test_length=y_test.shape[0], fit_past=10)
+    profit_single_ets, profit_multi_ets = ets_evaluate(y_test, results_dct, underage_data, overage_data, alpha_data)
+
+    print("Step 0")
     
     # Integrated Optimization Approach:
     best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
@@ -104,20 +110,27 @@ if __name__ == "__main__":
     
     print("Step 3")
 
+    
+
     # Seperate Optimization Approach:
     best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False, integrated = False)
     model_ANN_simple = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False, integrated = False)
     target_prediction_ANN = model_ANN_simple.predict(X_test)
     train_prediction_ANN = model_ANN_simple.predict(X_train)
     orders_ssp_ann, orders_ssnp_ann = solve_basic_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN, u=underage_data_single, o=overage_data_single)
-    profit_ssp_ANN = np.mean(nvps_profit(y_test, orders_ssp_ann, alpha_data, underage_data_single, overage_data_single))
-    profit_ssnp_ANN = np.mean(nvps_profit(y_test, orders_ssnp_ann, alpha_data, underage_data_single, overage_data_single))
+    profit_ssp_ANN = np.mean(nvps_profit(y_test, orders_ssp_ann, None, underage_data_single, overage_data_single))
+    profit_ssnp_ANN = np.mean(nvps_profit(y_test, orders_ssnp_ann, None, underage_data_single, overage_data_single))
+    
     
     # Print results
+    print("Profit Single ETS: ", profit_single_ets)
+    print("Profit Multi ETS: ", profit_multi_ets)
     print("Profit Complex ANN IOA: ", profit_complex_ANN_IOA)
     print("Profit Complex ANN SOA - parametric: ", profit_scp_ANN)
     print("Profit Complex ANN SOA - non-parametric: ", profit_scnp_ANN)
     print("Profit Simple ANN IOA: ", profit_simple_ANN_IOA)
     print("Profit Simple ANN SOA - parametric: ", profit_ssp_ANN)
     print("Profit Simple ANN SOA - non-parametric: ", profit_ssnp_ANN)
+
+    
     
