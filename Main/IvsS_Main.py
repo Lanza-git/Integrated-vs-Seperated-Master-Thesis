@@ -20,10 +20,10 @@ def load_packages():
     install('optuna-integration')
     install('gurobipy')
     install('statsmodels')
-    install('tensorflow<2.13')
+    install('tensorflow')#<2.13
     install('mpi4py')
 
-#load_packages()
+load_packages()
 
 # General imports
 import numpy as np
@@ -71,7 +71,7 @@ if __name__ == "__main__":
     #load_packages()
     create_environment()
 
-    path = "pfs/data5/home/ma/ma_ma/ma_elanza/test_dir/data.csv" # "Main/data.csv" 
+    path = "/pfs/data5/home/ma/ma_ma/ma_elanza/test_dir/data.csv" # "Main/data.csv" 
 
     trials = 10
 
@@ -81,7 +81,10 @@ if __name__ == "__main__":
     - IOA complex not working - resolved
     - SOA is cheating because of optuna - Resolved: check with Xander
     - XGBoost - resolved
-    - Baseline - ARMA and ETS
+    - Baseline - ARIMA 
+    - Baseline - ETS - resolved
+    - seperate optimization approach - the gaussian process is not working (1 value for all products)
+
     
        
     """
@@ -122,10 +125,7 @@ if __name__ == "__main__":
     
     # Integrated Optimization Approach - XGBoost - Complex:
     xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data, integrated=True, trials=trials)
-    print("xgb model trained")
     xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
-    print("xgb predicted")
-    print(np.isnan(X_test).any())
     profit_complex_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result, alpha=alpha_data, u=underage_data, o=overage_data))
     
     print("profit complex", profit_complex_XGB_IOA)
@@ -148,11 +148,16 @@ if __name__ == "__main__":
     single_feature_data, single_target_data = preprocess_data(raw_data=single_data)
     X_train, y_train, X_val, y_val, X_test, y_test = split_data(feature_data=single_feature_data, target_data=single_target_data)
     
+    print("Simple Data loaded")
+
     # Integrated Optimization Approach - Neural Network - Simple:
-    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single, multi = False, trials=trials)
-    model_ANN_simple = train_NN_model(hp=hyperparameter, X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha=None, underage=underage_data_single, overage=overage_data_single, multi = False)
+    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=alpha_data, underage_input=underage_data_single, overage_input=overage_data_single, multi = False, trials=trials)
+    print("nn model - complete - simple")
+    model_ANN_simple = train_NN_model(hp=hyperparameter, X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha=alpha_data, underage=underage_data_single, overage=overage_data_single, multi = False)
+    print("model trained - simple")
     target_prediction_ANN = model_ANN_simple.predict(X_test)
-    profit_simple_ANN_IOA = np.mean(nvps_profit(demand=y_test, q=target_prediction_ANN, alpha=None, u=underage_data_single, o=overage_data_single))
+    print("prediction - complete")
+    profit_simple_ANN_IOA = np.mean(nvps_profit(demand=y_test, q=target_prediction_ANN, alpha=alpha_data, u=underage_data_single, o=overage_data_single))
     
     print("Step 3")
 

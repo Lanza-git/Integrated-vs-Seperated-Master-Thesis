@@ -36,6 +36,7 @@ from optuna_integration.keras import KerasPruningCallback
 
 import gurobipy as gp
 from gurobipy import GRB
+import pickle
 
 from scipy.stats import norm
 
@@ -239,80 +240,16 @@ def solve_MILP(d, alpha, u, o, n_prods, n_threads=1):
     model.status : int
         Gurobi status code (see https://www.gurobi.com/documentation/current/refman/optimization_status_codes.html)
     """
+    
     u = u.T
     o = o.T
+
+    # Check the shapes of d and alpha
+    if d.shape[1] != alpha.shape[0]:
+        print(f"Shape mismatch: d has shape {d.shape} but alpha has shape {alpha.shape}. Transposing d.")
+        d = d.T
 
     hist = d.shape[0] # number of demand samples 
-
-    # compute upper bounds M
-    d_min = np.min(d, axis=0)
-    d_max = d + np.matmul(d, alpha)
-    M = np.array(np.max(d_max, axis=0)[0]-d_min)
-
-    # intialize model, disable console logging and set number of threads
-    model = gp.Model()
-    model.Params.LogToConsole = 0
-    model.Params.Threads = n_threads
-
-    # initialize model variables
-    z = model.addVars(hist, n_prods, vtype=GRB.BINARY)
-    q = model.addVars(n_prods)
-    y = model.addVars(hist, n_prods)
-    v = model.addVars(hist, n_prods)
-
-    # objective function
-    obj = gp.LinExpr()
-    for i in range(n_prods):
-        obj += u[0, i].item()*q[i]
-        for t in range(hist):
-            obj -= (u[0, i].item()+o[0, i].item()) / hist * y[t, i]
-    model.setObjective(obj, GRB.MAXIMIZE)
-
-    # constraints
-    for i in range(n_prods):
-        for t in range(hist):
-            model.addConstr(y[t, i]>=q[i]-d[t, i].item()-gp.quicksum(alpha[j, i]*v[t, j] for j in range(n_prods)))
-            model.addConstr(v[t, i]<=d[t, i].item()-q[i]+M[i]*z[t, i])
-            model.addConstr(v[t, i]>=d[t, i].item()-q[i]-M[i]*z[t, i])
-            model.addConstr(v[t, i]<=d[t, i].item()*(1-z[t, i]))
-
-    # solve and retrieve solution
-    model.optimize()
-    orders = np.array([[q[p].x for p in range(n_prods)]])
-    return orders, model.status
-
-def solve_MILP_1(d, alpha, u, o, n_threads=1):
-
-    """ helper function that solves the mixed-integer linear program (MILP) of the multi-product newsvendor problem under substitution (cf. slides)
-    
-    Parameters
-    -----------
-    d : np.array
-        Demand samples of shape (T, N_PRODUCTS), where T denotes the number of samples
-    alpha : np.array
-        Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
-    u : np.array
-        underage costs, shape (1, N_PRODUCTS)
-    o : np.array
-        overage costs, shape (1, N_PRODUCTS)
-
-    n_threads : int
-        number of threads
-
-    Returns
-    ----------
-    orders: np.array
-        Optimal orders, of shape (1, N_PRODUCTS)
-    model.status : int
-        Gurobi status code (see https://www.gurobi.com/documentation/current/refman/optimization_status_codes.html)
-    """
-    u = u.T
-    o = o.T
-
-    n_prods = d.size # number of products
-    hist = 1 #d.shape[0] # number of demand samples 
-
-    # compute upper bounds M
     d_min = np.min(d, axis=0)
     d_max = d + np.matmul(d, alpha)
     M = np.array(np.max(d_max, axis=0)[0]-d_min)
@@ -378,6 +315,10 @@ def solve_complex_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, 
     final_order_quantities_non_parametric : np.array
         Final order quantities for each week in data_test, non-parametric approach
     """
+    # compute T and n
+    length = y_train.shape[0]
+    number_products = y_train.shape[1]
+
     # Initialize an empty list to store the final order quantities
     final_order_quantities_parametric = []
     final_order_quantities_non_parametric = []
@@ -389,8 +330,8 @@ def solve_complex_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, 
     for row in y_test_pred: # row (n,)
 
         # Initialize arrays of shape (scenario_size, n)
-        demand_scenarios_parametric = np.zeros((scenario_size, len(row)))
-        demand_scenarios_non_parametric = np.zeros((scenario_size, len(row)))
+        demand_scenarios_parametric = np.zeros((scenario_size, number_products))
+        demand_scenarios_non_parametric = np.zeros((scenario_size, number_products))
 
         # Fill the arrays
         for i in range(scenario_size):
@@ -399,14 +340,13 @@ def solve_complex_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, 
             demand_scenarios_non_parametric[i] = row + random_row
 
         # Initialize a list to store the solutions for each scenario
-        number_products= len(row)
         saa_solutions_p = []
         saa_solutions_np = []
         
         # For each demand scenario, solve the newsvendor problem
         for demand in demand_scenarios_parametric:
             # Calculate the solution for this scenario
-            demand = demand.reshape(1,-1)
+            demand = demand.reshape(1,-1) # (1,n)
             solution, status = solve_MILP(d=demand, alpha=alpha, u=u, o=o, n_prods=number_products, n_threads=n_threads)
             # Store the solution for this scenario
             saa_solutions_p.append(solution)
@@ -417,7 +357,7 @@ def solve_complex_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, 
             solution, status = solve_MILP(d=demand, alpha=alpha, u=u, o=o, n_prods=number_products, n_threads=n_threads)
             # Store the solution for this scenario
             saa_solutions_np.append(solution)
-        
+
         # Average the solutions to get the final allocation
         final_allocation_p = np.mean(saa_solutions_p, axis=0)
         final_allocation_np = np.mean(saa_solutions_np, axis=0)
@@ -1137,11 +1077,241 @@ def train_XGB_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, 
         dtrain=Xy,
         num_boost_round=128,
         obj=custom_loss,
-        evals=[(Xy, "Train")],
-        custom_metric=newsvendorRMSE
+        evals=[(Xy, "Train")]
     )
     return final_booster, results
 
+############################################################### Approach Handler ########################################################
 
+def ioa_ann_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, dataset_id, path):
+    """ Train and evaluate the integrated optimization approach with a simple ANN model and saves model, hyperparameters and profit
+
+    Parameters
+    ----------
+    X_train : np.array
+        training feature data
+    y_train : np.array
+        training targets
+    X_val : np.array
+        validation feature data
+    y_val : np.array
+        validation targets
+    X_test : np.array
+        testing feature data
+    y_test : np.array
+        testing targets
+    underage_data_single : np.array
+        underage costs
+    overage_data_single : np.array
+        overage costs
+    dataset_id : int
+        dataset identifier
+    path : str
+        path to save the model
+    """
+    # Integrated Optimization Approach - ANN - simple:
+    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False)
+    model_ANN_simple = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False)
+    target_prediction_ANN = model_ANN_simple.predict(X_test)
+    profit_simple_ANN_IOA = np.mean(nvps_profit(y_test, target_prediction_ANN, None, underage_data_single, overage_data_single))
+    
+    # Create a dictionary 
+    data = {
+        'model': model_ANN_simple,
+        'hyperparameter': hyperparameter,
+        'profit': profit_simple_ANN_IOA
+    }
+    file_name = str(dataset_id) + '_ANN_simple_IOA' + '.pkl'
+    path_name = str(path) + file_name
+    # Pickle the dictionary into one file
+    with open(path_name, 'wb') as f:
+        pickle.dump(data, f)
+
+def soa_ann_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, dataset_id, path):
+    """
+    Train and evaluate the seperate optimization approach with a simple ANN model and saves model, hyperparameters and profit
+
+    Parameters
+    ----------
+    X_train : np.array
+        training feature data
+    y_train : np.array
+        training targets
+    X_val : np.array
+        validation feature data
+    y_val : np.array
+        validation targets
+    X_test : np.array
+        testing feature data
+    y_test : np.array
+        testing targets
+    underage_data_single : np.array
+        underage costs
+    overage_data_single : np.array
+        overage costs
+    dataset_id : int
+        dataset identifier
+    path : str
+        path to save the model
+    """
+    # Seperate Optimization Approach - ANN - simple:
+    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single, multi = False, integrated = False, trials=trials)   
+    model_ANN_simple = train_NN_model(hp=hyperparameter, X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha=None, underage=underage_data_single, overage=overage_data_single, multi = False, integrated = False)
+    target_prediction_ANN = model_ANN_simple.predict(X_test)
+    train_prediction_ANN = model_ANN_simple.predict(X_train)
+    orders_ssp_ann, orders_ssnp_ann = solve_basic_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN, u=underage_data_single, o=overage_data_single)
+    profit_ssp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_ssp_ann, alpha=None, u=underage_data_single, o=overage_data_single))
+    profit_ssnp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_ssnp_ann, alpha=None, u=underage_data_single, o=overage_data_single))
+    
+    # Create a dictionary 
+    data = {
+        'model': model_ANN_simple,
+        'hyperparameter': hyperparameter,
+        'profit_p': profit_ssp_ANN,
+        'profit_np': profit_ssnp_ANN
+    }
+    file_name = str(dataset_id) + '_ANN_simple_SOA' + '.pkl'
+    path_name = str(path) + file_name
+    # Pickle the dictionary into one file
+    with open(path_name, 'wb') as f:
+        pickle.dump(data, f)
+
+def ioa_xgb_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, dataset_id, path):
+    # Integrated Optimization Approach - XGBoost - Simple:
+    xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single, multi=False, integrated=True)
+    xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
+    profit_simple_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result, alpha=None, u=underage_data_single, o=overage_data_single))
+    
+    # Create a dictionary
+    data = {
+        'model': xgb_model,
+        'hyperparameter': params,
+        'profit': profit_simple_XGB_IOA
+    }
+    file_name = str(dataset_id) + '_XGB_simple_IOA' + '.pkl'
+    path_name = str(path) + file_name
+    # Pickle the dictionary into one file
+    with open(path_name, 'wb') as f:
+        pickle.dump(data, f)
+
+def soa_xgb_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, dataset_id, path):
+    # Seperated Optimization Approach - XGBoost - Simple:
+    xgb_model, hyperparameter_XGB_SOA_Complex, val_profit = tune_XGB_model(X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False, integrated = False)
+    target_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_test))
+    train_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_train))  
+    orders_ssp_XGB, orders_ssnp_XGB = solve_basic_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB, u=underage_data_single, o=overage_data_single)
+    profit_ssp_XGB = np.mean(nvps_profit(y_test, orders_ssp_XGB, None, underage_data_single, overage_data_single))
+    profit_ssnp_XGB = np.mean(nvps_profit(y_test, orders_ssnp_XGB, None, underage_data_single, overage_data_single))
+
+    # Create a dictionary
+    data = {
+        'model': xgb_model,
+        'hyperparameter': hyperparameter_XGB_SOA_Complex,
+        'profit_p': profit_ssp_XGB,
+        'profit_np': profit_ssnp_XGB
+    }
+    file_name = str(dataset_id) + '_XGB_simple_SOA' + '.pkl'
+    path_name = str(path) + file_name
+    # Pickle the dictionary into one file
+    with open(path_name, 'wb') as f:
+        pickle.dump(data, f)
+
+def ioa_ann_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, dataset_id, path):
+    # Integrated Optimization Approach - ANN - complex:
+    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
+    model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
+    target_prediction_ANN = model_ANN_complex.predict(X_test)
+    profit_complex_ANN_IOA = np.mean(nvps_profit(y_test, target_prediction_ANN, alpha_data, underage_data, overage_data))
+
+    # Create a dictionary
+    data = {
+        'model': model_ANN_complex,
+        'hyperparameter': hyperparameter,
+        'profit': profit_complex_ANN_IOA
+    }
+    file_name = str(dataset_id) + '_ANN_complex_IOA' + '.pkl'
+    path_name = str(path) + file_name
+    # Pickle the dictionary into one file
+    with open(path_name, 'wb') as f:
+        pickle.dump(data, f)
+
+def soa_ann_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, dataset_id, path):
+    # Seperate Optimization Approach - ANN - complex:
+    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True, integrated = False)
+    model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True,  integrated = False)
+    target_prediction_ANN = model_ANN_complex.predict(X_test)
+    train_prediction_ANN = model_ANN_complex.predict(X_train)
+    orders_scp_ann, orders_scnp_ann = solve_complex_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN, u=underage_data, o=overage_data, alpha=alpha_data)
+    profit_scp_ANN = np.mean(nvps_profit(y_test, orders_scp_ann, alpha_data, underage_data, overage_data))
+    profit_scnp_ANN = np.mean(nvps_profit(y_test, orders_scnp_ann, alpha_data, underage_data, overage_data))
+
+    # Create a dictionary
+    data = {
+        'model': model_ANN_complex,
+        'hyperparameter': hyperparameter,
+        'profit_p': profit_scp_ANN,
+        'profit_np': profit_scnp_ANN
+    }
+    file_name = str(dataset_id) + '_ANN_complex_SOA' + '.pkl'
+    path_name = str(path) + file_name
+    # Pickle the dictionary into one file
+    with open(path_name, 'wb') as f:
+        pickle.dump(data, f)
+
+def ioa_xgb_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, dataset_id, path):
+    # Integrated Optimization Approach - XGBoost - Complex:
+    xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data, integrated=True, trials=trials)
+    xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
+    profit_complex_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result, alpha=alpha_data, u=underage_data, o=overage_data))    
+    
+    # Create a dictionary
+    data = {
+        'model': xgb_model,
+        'hyperparameter': params,
+        'profit': profit_complex_XGB_IOA
+    }
+    file_name = str(dataset_id) + '_XGB_complex_IOA' + '.pkl'
+    path_name = str(path) + file_name
+    # Pickle the dictionary into one file
+    with open(path_name, 'wb') as f:
+        pickle.dump(data, f)
+
+def soa_xgb_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, dataset_id, path):
+    # Seperated Optimization Approach - XGBoost - Complex:
+    xgb_model, hyperparameter_XGB_SOA_Complex, val_profit = tune_XGB_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True, integrated = False)
+    target_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_test))
+    train_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_train))
+    orders_scp_XGB, orders_scnp_XGB = solve_complex_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB, u=underage_data, o=overage_data, alpha=alpha_data)
+    profit_scp_XGB = np.mean(nvps_profit(y_test, orders_scp_XGB, alpha_data, underage_data, overage_data))
+    profit_scnp_XGB = np.mean(nvps_profit(y_test, orders_scnp_XGB, alpha_data, underage_data, overage_data))
+
+    # Create a dictionary
+    data = {
+        'model': xgb_model,
+        'hyperparameter': hyperparameter_XGB_SOA_Complex,
+        'profit_p': profit_scp_XGB,
+        'profit_np': profit_scnp_XGB
+    }
+    file_name = str(dataset_id) + '_XGB_complex_SOA' + '.pkl'
+    path_name = str(path) + file_name
+    # Pickle the dictionary into one file
+    with open(path_name, 'wb') as f:
+        pickle.dump(data, f)
+
+def ets_baseline(X_train, y_train, X_val, y_val, X_test, y_test, underage_data, overage_data, alpha_data, dataset_id, path):
+    # ETS Forecasting:
+    results_dct, elapse_time = ets_forecast(y_train=y_train, y_val=y_val, y_test_length=y_test.shape[0], fit_past=10)
+    profit_single_ets, profit_multi_ets = ets_evaluate(y_test, results_dct, underage_data, overage_data, alpha_data)
+    
+    # Create a dictionary
+    data = {
+        'profit_single': profit_single_ets,
+        'profit_multi': profit_multi_ets
+    }
+    file_name = str(dataset_id) + '_ETS' + '.pkl'
+    path_name = str(path) + file_name
+    # Pickle the dictionary into one file
+    with open(path_name, 'wb') as f:
+        pickle.dump(data, f)
 
 
