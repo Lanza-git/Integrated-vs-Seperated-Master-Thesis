@@ -1083,7 +1083,7 @@ def train_XGB_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, 
 
 ############################################################### Approach Handler ########################################################
 
-def ioa_ann_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, dataset_id, path):
+def ioa_ann_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, trials, dataset_id, path):
     """ Train and evaluate the integrated optimization approach with a simple ANN model and saves model, hyperparameters and profit
 
     Parameters
@@ -1110,7 +1110,7 @@ def ioa_ann_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data
         path to save the model
     """
     # Integrated Optimization Approach - ANN - simple:
-    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False)
+    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False, trials=trials)
     model_ANN_simple = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False)
     target_prediction_ANN = model_ANN_simple.predict(X_test)
     profit_simple_ANN_IOA = np.mean(nvps_profit(y_test, target_prediction_ANN, None, underage_data_single, overage_data_single))
@@ -1127,7 +1127,7 @@ def ioa_ann_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data
     with open(path_name, 'wb') as f:
         pickle.dump(data, f)
 
-def soa_ann_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, dataset_id, path):
+def soa_ann_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, trials, dataset_id, path):
     """
     Train and evaluate the seperate optimization approach with a simple ANN model and saves model, hyperparameters and profit
 
@@ -1176,9 +1176,9 @@ def soa_ann_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data
     with open(path_name, 'wb') as f:
         pickle.dump(data, f)
 
-def ioa_xgb_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, dataset_id, path):
+def ioa_xgb_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, trials, dataset_id, path):
     # Integrated Optimization Approach - XGBoost - Simple:
-    xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single, multi=False, integrated=True)
+    xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single, multi=False, integrated=True, trials=trials)
     xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
     profit_simple_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result, alpha=None, u=underage_data_single, o=overage_data_single))
     
@@ -1194,9 +1194,9 @@ def ioa_xgb_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data
     with open(path_name, 'wb') as f:
         pickle.dump(data, f)
 
-def soa_xgb_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, dataset_id, path):
+def soa_xgb_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, trials, dataset_id, path):
     # Seperated Optimization Approach - XGBoost - Simple:
-    xgb_model, hyperparameter_XGB_SOA_Complex, val_profit = tune_XGB_model(X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False, integrated = False)
+    xgb_model, hyperparameter_XGB_SOA_Complex, val_profit = tune_XGB_model(X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False, integrated = False, trials=trials)
     target_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_test))
     train_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_train))  
     orders_ssp_XGB, orders_ssnp_XGB = solve_basic_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB, u=underage_data_single, o=overage_data_single)
@@ -1216,9 +1216,9 @@ def soa_xgb_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data
     with open(path_name, 'wb') as f:
         pickle.dump(data, f)
 
-def ioa_ann_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, dataset_id, path):
+def ioa_ann_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, trials, dataset_id, path):
     # Integrated Optimization Approach - ANN - complex:
-    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
+    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data, trials=trials)
     model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
     target_prediction_ANN = model_ANN_complex.predict(X_test)
     profit_complex_ANN_IOA = np.mean(nvps_profit(y_test, target_prediction_ANN, alpha_data, underage_data, overage_data))
@@ -1235,9 +1235,9 @@ def ioa_ann_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, 
     with open(path_name, 'wb') as f:
         pickle.dump(data, f)
 
-def soa_ann_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, dataset_id, path):
+def soa_ann_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, trials, dataset_id, path):
     # Seperate Optimization Approach - ANN - complex:
-    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True, integrated = False)
+    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True, integrated = False, trials=trials)
     model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True,  integrated = False)
     target_prediction_ANN = model_ANN_complex.predict(X_test)
     train_prediction_ANN = model_ANN_complex.predict(X_train)
@@ -1258,7 +1258,7 @@ def soa_ann_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, 
     with open(path_name, 'wb') as f:
         pickle.dump(data, f)
 
-def ioa_xgb_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, dataset_id, path):
+def ioa_xgb_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, trials, dataset_id, path):
     # Integrated Optimization Approach - XGBoost - Complex:
     xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data, integrated=True, trials=trials)
     xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
@@ -1276,9 +1276,9 @@ def ioa_xgb_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, 
     with open(path_name, 'wb') as f:
         pickle.dump(data, f)
 
-def soa_xgb_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, dataset_id, path):
+def soa_xgb_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, trials, dataset_id, path):
     # Seperated Optimization Approach - XGBoost - Complex:
-    xgb_model, hyperparameter_XGB_SOA_Complex, val_profit = tune_XGB_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True, integrated = False)
+    xgb_model, hyperparameter_XGB_SOA_Complex, val_profit = tune_XGB_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True, integrated = False, trials=trials)
     target_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_test))
     train_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_train))
     orders_scp_XGB, orders_scnp_XGB = solve_complex_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB, u=underage_data, o=overage_data, alpha=alpha_data)
@@ -1298,13 +1298,14 @@ def soa_xgb_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, 
     with open(path_name, 'wb') as f:
         pickle.dump(data, f)
 
-def ets_baseline(X_train, y_train, X_val, y_val, X_test, y_test, underage_data, overage_data, alpha_data, dataset_id, path):
+def ets_baseline(y_train, y_val, y_test, underage_data, overage_data, alpha_data, fit_past, dataset_id, path):
     # ETS Forecasting:
-    results_dct, elapse_time = ets_forecast(y_train=y_train, y_val=y_val, y_test_length=y_test.shape[0], fit_past=10)
+    results_dct, elapse_time = ets_forecast(y_train=y_train, y_val=y_val, y_test_length=y_test.shape[0], fit_past=fit_past)
     profit_single_ets, profit_multi_ets = ets_evaluate(y_test, results_dct, underage_data, overage_data, alpha_data)
     
     # Create a dictionary
     data = {
+        'elapse_time': elapse_time,
         'profit_single': profit_single_ets,
         'profit_multi': profit_multi_ets
     }
