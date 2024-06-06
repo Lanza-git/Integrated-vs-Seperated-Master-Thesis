@@ -1178,7 +1178,10 @@ def soa_ann_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data
 
 def ioa_xgb_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, trials, dataset_id, path):
     # Integrated Optimization Approach - XGBoost - Simple:
-    xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single, multi=False, integrated=True, trials=trials)
+    try:
+        xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single, multi=False, integrated=True, trials=trials)
+    except AssertionError:
+        print("An error occurred while tuning the XGBoost model. - IOA simple")
     xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
     profit_simple_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result, alpha=None, u=underage_data_single, o=overage_data_single))
     
@@ -1196,7 +1199,11 @@ def ioa_xgb_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data
 
 def soa_xgb_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, trials, dataset_id, path):
     # Seperated Optimization Approach - XGBoost - Simple:
-    xgb_model, hyperparameter_XGB_SOA_Complex, val_profit = tune_XGB_model(X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False, integrated = False, trials=trials)
+    try: 
+        xgb_model, hyperparameter_XGB_SOA_Complex, val_profit = tune_XGB_model(X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False, integrated = False, trials=trials)
+    except AssertionError:
+            print("An error occurred while tuning the XGBoost model. - SOA simple")
+
     target_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_test))
     train_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_train))  
     orders_ssp_XGB, orders_ssnp_XGB = solve_basic_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB, u=underage_data_single, o=overage_data_single)

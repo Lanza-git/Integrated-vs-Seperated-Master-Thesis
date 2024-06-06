@@ -79,6 +79,7 @@ def main(path):
     trials = 100
     dataset_id = 0
     final_path = "/pfs/data5/home/ma/ma_ma/ma_elanza/test_dir/Results_test/"
+    massage = str(rank)
 
     # Depending on the rank of the process, run a different approach
     if rank < 2:
@@ -113,7 +114,7 @@ def main(path):
             soa_xgb_simple(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test,
                         y_test=y_test, underage_data_single=underage_data_single, overage_data_single=overage_data_single,
                         trials=trials, dataset_id=dataset_id, path=final_path)
-            message = "ioa_xgb_simple = Complete"
+            message = "soa_xgb_simple = Complete"
 
     elif rank >= 4:
         # Load multi Data
