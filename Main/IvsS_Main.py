@@ -84,6 +84,8 @@ if __name__ == "__main__":
     - Baseline - ARIMA 
     - Baseline - ETS - resolved
     - seperate optimization approach - the gaussian process is not working (1 value for all products)
+    - test file for all functions
+    
 
     
        

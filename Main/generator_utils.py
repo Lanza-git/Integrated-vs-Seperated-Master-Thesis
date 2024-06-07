@@ -88,39 +88,47 @@ def generate_theta(num_dimensions=3, factor=1):
 
 
 
-"""
-A: This is a diagonal matrix that scales each dimension of X by 2.5.
-A is the mean-dependence of the ith demand on these factors with some idiosyncratic noise
-"""
-A = 2.5 * np.array([
-    [0.8, 0.1, 0.1],
-    [0.1, 0.8, 0.1],
-    [0.1, 0.1, 0.8],
-    [0.8, 0.1, 0.1],
-    [0.1, 0.8, 0.1],
-    [0.1, 0.1, 0.8],
-    [0.8, 0.1, 0.1],
-    [0.1, 0.8, 0.1],
-    [0.1, 0.1, 0.8]
-])
-A = A[:3]
+def get_A_B():
+    """
+    A: This is a diagonal matrix that scales each dimension of X by 2.5.
+    A is the mean-dependence of the ith demand on these factors with some idiosyncratic noise
+    """
+    A = 2.5 * np.array([
+        [0.8, 0.1, 0.1],
+        [0.1, 0.8, 0.1],
+        [0.1, 0.1, 0.8],
+        [0.8, 0.1, 0.1],
+        [0.1, 0.8, 0.1],
+        [0.1, 0.1, 0.8],
+        [0.8, 0.1, 0.1],
+        [0.1, 0.8, 0.1],
+        [0.1, 0.1, 0.8],
+        [0.8, 0.1, 0.1],
+        [0.1, 0.8, 0.1],
+        [0.1, 0.1, 0.8]
+    ])
 
-"""
-B: This matrix introduces dependencies between different dimensions of X. 
-For example, each element of the output is influenced by other elements of the input.
-"""
-B = 7.5 * np.array([
-    [ 0, -1, -1],
-    [-1,  0,  1],
-    [-1,  1,  0],
-    [ 0, -1,  1],
-    [-1,  0,  1],
-    [ 1, -1,  0],
-    [ 0,  1,  1],
-    [ 1,  0,  1],
-    [ 1,  1,  0]
-])
-B = B[:3]
+
+    """
+    B: This matrix introduces dependencies between different dimensions of X. 
+    For example, each element of the output is influenced by other elements of the input.
+    """
+    B = 7.5 * np.array([
+        [ 0, -1, -1],
+        [-1,  0, -1],
+        [-1, -1,  0],
+        [ 0, -1,  1],
+        [-1,  0,  1],
+        [-1,  1,  0],
+        [ 0,  1, -1],
+        [ 1,  0, -1],
+        [ 1, -1,  0],
+        [ 0,  1,  1],
+        [ 1,  0,  1],
+        [ 1,  1,  0]
+    ])
+    return A, B
+
 
 ################################################### Functions ########################################################################
 
@@ -191,71 +199,55 @@ def generate_demand(X, n_periods):
 
     Output: 
     ------------
-    Y: matrix of demand values (n_periods, 3)
+    Y: matrix of demand values
 
     Variables (noise terms):
     ------------
-    epsilon: noise term for the demand generation (n_periods, 3)
+    epsilon: noise term for the demand generation 
         --> increasing - resulting demand Y is more volatile
     delta: independent noise term. This noise term is added to X to introduce additional variability.
         --> increasing - input features X will have more variability before being transformed - more variability
-    
     """
-    epsilon = np.random.normal(0, 1, (n_periods, 3))
-    delta = np.random.normal(0, 1, size=(len(X), 3)) / 4 
-    Y = np.maximum(0, (X + delta) @ A.T + (X @ B.T) * epsilon)
+    A, B = get_A_B()
+    # create noise term epsilon
+    np.random.seed(42)
+    epsilon = np.random.normal(0, 1, (n_periods, 12))
+    # create noise term delta
+    np.random.seed(24)
+    delta = np.random.normal(0, 1, (n_periods, 3)) / 4
+    # transform the input features X
+    Y = np.maximum(0, (X + delta) @ A.T + (X @ B.T) * epsilon)        
     return Y
+
+import numpy as np
+
+def add_dimensions(data, L=1):
+    """
+    Add 3L dimensions to the dataset by creating L copies of each feature and adding Gaussian noise.
+    
+    Parameters:
+        data (np.array): The original dataset, assumed to be an array where rows are samples and columns are features.
+        L (int): The number of copies to be created for each feature.
+        
+    Returns:
+        np.array: The expanded dataset with additional noisy features.
+    """    
+    expanded_data = data.copy()
+
+    # Generate new features by adding Gaussian noise to copies of the original features
+    for i in range(L):
+        print(i)
+        # Compute the scale of the noise
+        sigma = (1/2) ** (i+1)  
+
+        # Add Gaussian noise scaled by sigma to each feature
+        noisy_features = data * sigma+ np.random.normal(0, 1, data.shape) 
+        
+        # Place the noisy features in the corresponding columns of the new feature array
+        expanded_data = np.append(expanded_data, noisy_features, axis=1)
+    
+    return expanded_data
+
 
 
 ################################################### Main ########################################################################
-
-if __name__ == '__main__':
-
-    dimensions = 9
-
-    """
-    generate the covariance matrix for the innovations U
-    - diagonal: increasing the scale_diagonal increases the variance of the innovations --> more volatile
-    - off-diagonal: increasing the scale_off_diagonal increases the correlation between the innovations --> more synchronized
-    """
-    sigma_U = generate_sigma_U(num_dimensions=dimensions, scale_diagonal=0.05, scale_off_diagonal=0.05)
-
-    """
-    Set up the AutoRegressive coefficents (AR) 
-
-    Influence: How much past values of the time series affect the current value.
-    - decrease: make data more random / unpredictable
-    - increase: make data more predictable
-    """
-    Phi1, Phi2 = generate_phi(num_dimensions=dimensions, factor=1)
-
-    """
-    Set up the Moving Average coefficients (MA)
-
-    Influence: How much past error terms (unexpected shocks) affect the current value.
-    - increse: make data more dependent on past shocks/errors, make data more volatile
-    - decrease: less sensitve to shocks
-    """
-    Theta1, Theta2 = generate_theta(num_dimensions=dimensions, factor=1)
-
-    # define the number of periods to simulate
-    n_periods = 100
-    # simulate the ARMA process
-    X = simulate_arma22(n_periods=n_periods, Phi1=Phi1, Phi2=Phi2, Theta1=Theta1, Theta2=Theta2, sigma_U=sigma_U, num_dimensions=dimensions)
-
-    # generate the demand
-    Y = generate_demand(X[:,:3], n_periods)
-
-    print(X.shape, Y.shape)
-
-
-    df_target = pd.DataFrame(Y, columns=['Demand1', 'Demand2', 'Demand3'])
-    df_features = pd.DataFrame(X, columns=['Feature1', 'Feature2', 'Feature3', 'Feature4', 'Feature5', 'Feature6', 'Feature7', 'Feature8', 'Feature9'])
-
-    variance_target = df_target.var()
-    print(variance_target)
-
-    print(df_target.head())
-    print(df_features.head())
-
-    
