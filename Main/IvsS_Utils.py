@@ -45,10 +45,14 @@ from keras.utils import get_custom_objects
 import datetime
 from statsmodels.tsa.exponential_smoothing.ets import ETSModel
 import itertools
+import logging
 
 alpha = []
 underage = []
 overage = []
+
+
+logger = logging.getLogger(__name__)
 
 ######################## Environment Setup Functions #####################################################################    
 
@@ -57,23 +61,23 @@ def create_environment():
 
     # Set the environment variables for Gurobi
     os.environ['GRB_LICENSE_FILE'] = '/pfs/data5/home/ma/ma_ma/ma_elanza/test_dir/gurobi.lic'
+    
     #os.environ['TF_ENABLE_ONEDNN_OPTS']=0
 
 
 ######################## Data Handling Functions ############################################################
 
-def load_data(path, multi=False):
+def load_data(path:str, multi:bool=False):
     """ Load  data for the newsvendor problem from specified location 
 
     Parameters
     ---------
-    path : str
-    multi : bool        - if True, all products are considered, if False, only product 1 is considered
-    test_size : float   - proportion of the dataset to include in the test split
-
+    path : path to the data file
+    multi : if True, all products are considered, if False, only product 1 is considered
+    
     Returns
     ---------
-    raw_data : np.array
+    raw_data : pd.dataframe
     """ 
     # Load Data
     raw_data = pd.read_csv(path)    
@@ -85,12 +89,12 @@ def load_data(path, multi=False):
         raw_data = raw_data[selected_columns]
     return raw_data
 
-def preprocess_data(raw_data):
+def preprocess_data(raw_data:pd.DataFrame):
     """ Preprocess the data for the newsvendor problem
     
     Parameters
     ---------
-    raw_data : pd.dataframe
+    raw_data : raw data
 
     Returns
     ---------
@@ -185,53 +189,53 @@ def split_data(feature_data, target_data, test_size=0.2, val_size=0.2):
 
 ######################### Newsvendor related Functions ########################################################
 
-def nvps_profit(demand, q, alpha, u, o):
+def load_cost_structure(alpha_input:np.array, underage_input:np.array, overage_input:np.array):
+    """ Load the cost structure for the newsvendor problem"""
+    global alpha, underage, overage
+    alpha = alpha_input
+    underage = underage_input
+    overage = overage_input
+
+
+def nvps_profit(demand:np.array, q:np.array):
     """ Profit function of the newsvendor under substitution
     
     Parameters
     ---------
-    demand : np.array
-        actual demand, shape (T, N_PRODUCTS)
-    q : np.array
-        predicted orders, shape (T, N_PRODUCTS)
-    alpha: np.array
-        substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
+    demand : actual demand, shape (T, N_PRODUCTS)
+    q : predicted orders, shape (T, N_PRODUCTS)
+    alpha: substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
+    u : underage costs, shape (1, N_PRODUCTS)
+    o : overage costs, shape (1, N_PRODUCTS)
 
     Returns
     ---------
     profits: np.array
         Profits by period, shape (T,1)
     """
+    global alpha, underage, overage
     if demand.shape[1] == 1:
         q = np.maximum(0., q)
-
         if len(q.shape) == 1:
             q = q.reshape(-1, 1)
-
-        profits = np.sum(np.minimum(q,demand)*u - np.maximum(demand-q, 0.)*(u)-np.maximum(q-demand, 0.)*(o))
+        profits = np.sum(np.minimum(q,demand)*underage - np.maximum(demand-q, 0.)*(underage)-np.maximum(q-demand, 0.)*(overage))
     else:
         q = np.maximum(0., q) # make sure orders are non-negative
         demand_s = demand + np.matmul(np.maximum(demand-q, 0.), alpha) # demand including substitutions
-        profits = np.matmul(q, u) - np.matmul(np.maximum(q-demand_s, 0.), (u+o)) # period-wise profit (T x 1)
+        profits = np.matmul(q, underage) - np.matmul(np.maximum(q-demand_s, 0.), (underage+overage)) # period-wise profit (T x 1)
     return profits
 
-def solve_MILP(d, alpha, u, o, n_prods, n_threads=1):
+def solve_MILP(d:np.array, n_threads:int=40):
     """ helper function that solves the mixed-integer linear program (MILP) of the multi-product newsvendor problem under substitution (cf. slides)
     
     Parameters
     -----------
-    d : np.array
-        Demand samples of shape (n, N_PRODUCTS), where n denotes the number of samples
-    alpha : np.array
-        Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
-    u : np.array
-        underage costs, shape (1, N_PRODUCTS)
-    o : np.array
-        overage costs, shape (1, N_PRODUCTS)
-    n_prods : int
-        number of products
-    n_threads : int
-        number of threads
+    d : Demand samples of shape (n, N_PRODUCTS), where n denotes the number of samples
+    alpha : Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
+    u : underage costs, shape (1, N_PRODUCTS)
+    o : overage costs, shape (1, N_PRODUCTS)
+    n_prods : number of products
+    n_threads : number of threads
 
     Returns
     ----------
@@ -240,19 +244,21 @@ def solve_MILP(d, alpha, u, o, n_prods, n_threads=1):
     model.status : int
         Gurobi status code (see https://www.gurobi.com/documentation/current/refman/optimization_status_codes.html)
     """
-    
-    u = u.T
-    o = o.T
+    global alpha, underage, overage
+    n_prods = d.shape[1] # number of products
+
+    # Transpose 
+    u = underage.T
+    o = overage.T
 
     # Check the shapes of d and alpha
     if d.shape[1] != alpha.shape[0]:
-        print(f"Shape mismatch: d has shape {d.shape} but alpha has shape {alpha.shape}. Transposing d.")
         d = d.T
 
     hist = d.shape[0] # number of demand samples 
-    d_min = np.min(d, axis=0)
-    d_max = d + np.matmul(d, alpha)
-    M = np.array(np.max(d_max, axis=0)[0]-d_min)
+    d_min = np.min(d, axis=0) # minimum demand for each product
+    d_max = d + np.matmul(d, alpha) # maximum demand for each product
+    M = np.array(np.max(d_max, axis=0)[0]-d_min) # big M
 
     # intialize model, disable console logging and set number of threads
     model = gp.Model()
@@ -283,30 +289,25 @@ def solve_MILP(d, alpha, u, o, n_prods, n_threads=1):
 
     # solve and retrieve solution
     model.optimize()
-    orders = np.array([[q[p].X for p in range(n_prods)]])
+    if model.status == GRB.OPTIMAL:
+        orders = np.array([[q[p].X for p in range(n_prods)]])
+    else:
+        raise Exception('Optimization was not successful.')
     return orders, model.status
 
-def solve_complex_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, alpha, scenario_size = 10, n_threads=40):
+def solve_complex_newsvendor_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=10, n_threads:int=40):
     """Solve the complex newsvendor problem in a parametric and a non-parametric way.
 
     Parameters
     ----------
-    y_train : np.array
-        Demand data for training, shape (T, N_PRODUCTS)
-    y_train_pred : np.array
-        Demand predictions for training, shape (T, N_PRODUCTS)
-    y_test_pred : np.array
-        Demand predictions for testing, shape (T, N_PRODUCTS)
-    u : np.array
-        Underage costs, shape (1, N_PRODUCTS)
-    o : np.array
-        Overage costs, shape (1, N_PRODUCTS)
-    alpha : np.array
-        Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
-    scenario_size : int
-        Number of scenarios to sample for the approaches
-    n_threads : int
-        Number of threads for the optimization
+    y_train : Demand data for training, shape (T, N_PRODUCTS)
+    y_train_pred : Demand predictions for training, shape (T, N_PRODUCTS)
+    y_test_pred : Demand predictions for testing, shape (T, N_PRODUCTS)
+    u : Underage costs, shape (1, N_PRODUCTS)
+    o : Overage costs, shape (1, N_PRODUCTS)
+    alpha : Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
+    scenario_size : Number of scenarios to sample for the approaches
+    n_threads : Number of threads for the optimization
 
     Returns
     ----------
@@ -315,9 +316,8 @@ def solve_complex_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, 
     final_order_quantities_non_parametric : np.array
         Final order quantities for each week in data_test, non-parametric approach
     """
-    # compute T and n
-    length = y_train.shape[0]
-    number_products = y_train.shape[1]
+    global alpha, underage, overage
+    n_prods = y_train.shape[1] # number of products
 
     # Initialize an empty list to store the final order quantities
     final_order_quantities_parametric = []
@@ -330,8 +330,8 @@ def solve_complex_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, 
     for row in y_test_pred: # row (n,)
 
         # Initialize arrays of shape (scenario_size, n)
-        demand_scenarios_parametric = np.zeros((scenario_size, number_products))
-        demand_scenarios_non_parametric = np.zeros((scenario_size, number_products))
+        demand_scenarios_parametric = np.zeros((scenario_size, n_prods))
+        demand_scenarios_non_parametric = np.zeros((scenario_size, n_prods))
 
         # Fill the arrays
         for i in range(scenario_size):
@@ -347,14 +347,14 @@ def solve_complex_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, 
         for demand in demand_scenarios_parametric:
             # Calculate the solution for this scenario
             demand = demand.reshape(1,-1) # (1,n)
-            solution, status = solve_MILP(d=demand, alpha=alpha, u=u, o=o, n_prods=number_products, n_threads=n_threads)
+            solution, status = solve_MILP(d=demand, n_threads=n_threads)
             # Store the solution for this scenario
             saa_solutions_p.append(solution)
 
         for demand in demand_scenarios_non_parametric:
             # Calculate the solution for this scenario
             demand = demand.reshape(1,-1)
-            solution, status = solve_MILP(d=demand, alpha=alpha, u=u, o=o, n_prods=number_products, n_threads=n_threads)
+            solution, status = solve_MILP(d=demand, n_threads=n_threads)
             # Store the solution for this scenario
             saa_solutions_np.append(solution)
 
@@ -368,25 +368,18 @@ def solve_complex_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, 
 
     return final_order_quantities_parametric, final_order_quantities_non_parametric
 
-def solve_basic_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, scenario_size = 10, n_threads=40):
+def solve_basic_newsvendor_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=10, n_threads:int=40):
     """Solve the basic newsvendor problem in a parametric and a non-parametric way.
 
     Parameters
     ----------
-    y_train : np.array
-        Demand data for training, shape (T, N_PRODUCTS)
-    y_train_pred : np.array
-        Demand predictions for training, shape (T, N_PRODUCTS)
-    y_test_pred : np.array
-        Demand predictions for testing, shape (T, N_PRODUCTS)
-    u : np.array
-        Underage costs, shape (1, N_PRODUCTS)
-    o : np.array
-        Overage costs, shape (1, N_PRODUCTS)
-    scenario_size : int
-        Number of scenarios to sample for the approaches
-    n_threads : int
-        Number of threads for the optimization
+    y_train : Demand data for training, shape (T, N_PRODUCTS)
+    y_train_pred : Demand predictions for training, shape (T, N_PRODUCTS)
+    y_test_pred : Demand predictions for testing, shape (T, N_PRODUCTS)
+    u : Underage costs, shape (1, N_PRODUCTS)
+    o : Overage costs, shape (1, N_PRODUCTS)
+    scenario_size : Number of scenarios to sample for the approaches
+    n_threads : Number of threads for the optimization
 
     Returns
     ----------
@@ -395,8 +388,8 @@ def solve_basic_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, sc
     final_order_quantities_non_parametric : np.array
         Final order quantities for each week in data_test, non-parametric approach
     """
-
-    critical_ratio = u / (u + o)
+    global alpha, underage, overage
+    critical_ratio = underage / (underage + overage) # critical ratio
     
      # Initialize an empty list to store the final order quantities
     final_order_quantities_parametric = []
@@ -415,7 +408,6 @@ def solve_basic_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, sc
 
         # Create Demand Scenarios for this week
         demand_scenarios_parametric = y_test_pred[i] + np.random.normal(loc=0, scale=forecast_error_std, size=scenario_size)
-        
         demand_scenarios_non_parametric = y_test_pred[i] + np.random.choice(forecast_error_flattened, size=scenario_size) 
 
         # Initialize a list to store the solutions for each scenario
@@ -446,22 +438,17 @@ def solve_basic_newsvendor_seperate(y_train, y_train_pred, y_test_pred, u, o, sc
     return final_order_quantities_parametric, final_order_quantities_non_parametric
 
 ############################### ETS Functions ###########################################################################
-
-def ets_forecast( y_train, y_val, y_test_length, verbose=0, fit_past = 12*7):
+        
+def ets_forecast(y_train:np.array, y_val:np.array, y_test_length:int, verbose:int=0, fit_past:int = 12*7):
     """Forecast the demand using the ETS model
 
     Parameters
     ----------
-    y_train : np.array
-        Demand data for training, shape (T, N_PRODUCTS)
-    y_val : np.array
-        Demand data for validation, shape (T, N_PRODUCTS)
-    y_test_length : int
-        Number of samples in the test set
-    verbose : int
-        Verbosity level
-    fit_past : int
-        Number of samples in the demand distribution estimate
+    y_train : Demand data for training, shape (T, N_PRODUCTS)
+    y_val : Demand data for validation, shape (T, N_PRODUCTS)
+    y_test_length : Number of samples in the test set
+    verbose : Verbosity level
+    fit_past : Number of samples in the demand distribution estimate
 
     Returns
     ----------
@@ -491,23 +478,16 @@ def ets_forecast( y_train, y_val, y_test_length, verbose=0, fit_past = 12*7):
     best_rmse = np.inf
     results_dct = {}
     
-    print('Starting model selection.\n')
     elapsed = 0 # elapsed time in seconds
 
     # loop over products
     for i in range(N_PRODUCTS):
         start_i = datetime.datetime.now() # computation start for product i
-        
-        if verbose>0:
-            print('Starting product {}/{}.'.format(i+1, N_PRODUCTS)) # console update
-            
         results_dct[i] = {} # initialize result dict for product i
         target = np.append(y_train[:,i], y_val[:, i]) # train and val targets for i
         
         # loop through configurations
-        for n_config, config in enumerate(model_configs, 1):
-            if verbose>0:
-                print('Starting config {}/{}.'.format(n_config, len(model_configs))) # console update
+        for index, config in enumerate(model_configs, 1):
             preds = np.array([]) # variable in which validation set predictions are stored
             try:
                 # loop through validation timesteps, fit and predict on-day-ahead
@@ -515,10 +495,7 @@ def ets_forecast( y_train, y_val, y_test_length, verbose=0, fit_past = 12*7):
                     model = ETSModel(target[N_TRAIN+t-fit_past:N_TRAIN+t], *config)
                     model = model.fit()
                     preds = np.append(preds, np.maximum(0, model.forecast(timesteps)))
-                    if verbose==2:
-                        print(t, end=',') # console update
-                if verbose==2:
-                    print('\n')
+
                 # after evaluation is completed, compute RMSE and MAPE on validation set
                 target_val = target[N_TRAIN:N_TRAIN+N_VAL]
                 print(y_val.shape, target_val.shape, preds.shape)
@@ -550,30 +527,17 @@ def ets_forecast( y_train, y_val, y_test_length, verbose=0, fit_past = 12*7):
         results_dct[i] = (best_config, best_rmse, best_mape, best_test_pred, best_message) # save results for product "i" and configuration "config"
         elapsed_i = (datetime.datetime.now()-start_i).total_seconds() # record time
         elapsed += elapsed_i
-        if verbose>0:
-            print('Elapsed for product {}/{}: {}.'.format(i+1, N_PRODUCTS, elapsed_i)) # console update
-            print('\n\n')
-    print('Total elapsed: {}.'.format(elapsed))
 
     return results_dct, elapsed
 
-def ets_evaluate(y_test, results_dct, underage, overage, alpha, verbose=0):
+def ets_evaluate(y_test:np.array, results_dct:dict):
     """Evaluate the ETS model
 
     Parameters
     ----------
-    y_test : np.array
-        Demand data for testing, shape (T, N_PRODUCTS)
-    results_dct : dict
-        Dictionary containing the results for each product
-    underage : np.array
-        Underage costs, shape (1, N_PRODUCTS)
-    overage : np.array
-        Overage costs, shape (1, N_PRODUCTS)
-    alpha : np.array
-        Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
-    verbose : int
-        Verbosity level
+    y_test : Demand data for testing, shape (T, N_PRODUCTS)
+    results_dct : Dictionary containing the results for each product
+    underage : Underage costs, shape (1, N_PRODUCTS)
 
     Returns
     ----------
@@ -582,6 +546,7 @@ def ets_evaluate(y_test, results_dct, underage, overage, alpha, verbose=0):
     profit_ets_multi : float
         Profit for the multi-product case
     """
+    global alpha, underage, overage
     N_PRODUCTS = y_test.shape[1] # number of products
     N_TEST = y_test.shape[0] # number of test samples
 
@@ -593,41 +558,27 @@ def ets_evaluate(y_test, results_dct, underage, overage, alpha, verbose=0):
     y_test_single = y_test[:,0].reshape(-1, 1)
     test_pred_single = test_pred[:,0].reshape(-1, 1)
 
-    underage_single = underage[0,0]
-    overage_single = overage[0,0]
-
-    profit_ets_single = np.mean(nvps_profit(y_test_single, test_pred_single, None, underage_single, overage_single))
-    profit_ets_multi = np.mean(nvps_profit(y_test, test_pred, alpha, underage, overage))
+    profit_ets_single = np.mean(nvps_profit(y_test_single, test_pred_single, None,  underage[0,0],  overage[0,0]))
+    profit_ets_multi = np.mean(nvps_profit(y_test, test_pred,  alpha,  underage,  overage))
 
     return  profit_ets_single, profit_ets_multi
-    
-    
-
-    
 
 ######################### Neural Network Functions ######################################################################
 
-def make_nvps_loss(alpha, underage, overage):
+def make_nvps_loss():
     """ Create a custom loss function for the newsvendor problem under substitution
     
-    Parameters
-    ---------
-    alpha : np.array
-        substitution matrix
-    underage : np.array
-        underage costs
-    overage : np.array
-        overage costs
-
     Returns
     ---------
     nvps_loss : function
         Custom loss function
     """
+    global alpha, underage, overage
+
     # transofrm the alpha, u, o to tensors
-    underage = tf.convert_to_tensor(underage, dtype=tf.float32) #underage costs
-    overage = tf.convert_to_tensor(overage, dtype=tf.float32) #overage costs
-    alpha = tf.convert_to_tensor(alpha, dtype=tf.float32) #substitution matrix
+    u = tf.convert_to_tensor(underage, dtype=tf.float32) #underage costs
+    o = tf.convert_to_tensor(overage, dtype=tf.float32) #overage costs
+    a = tf.convert_to_tensor(alpha, dtype=tf.float32) #substitution matrix
 
     # define the loss function
     @tf.autograph.experimental.do_not_convert
@@ -638,31 +589,25 @@ def make_nvps_loss(alpha, underage, overage):
         q = tf.maximum(y_pred, 0.)
 
         # Calculate the demand increase for each product due to substitutions from other products
-        demand_increase = tf.matmul( tf.maximum(0.0, y_true - y_pred),alpha)
+        demand_increase = tf.matmul( tf.maximum(0.0, y_true - y_pred),a)
         # Adjusted demand is the original demand plus the increase due to substitutions
         adjusted_demand = y_true + demand_increase
         # Calculate the profits
-        profits = tf.matmul(q,underage) - tf.matmul(tf.maximum(0.0,q - adjusted_demand), underage+overage)
+        profits = tf.matmul(q,u) - tf.matmul(tf.maximum(0.0,q - adjusted_demand), u+o)
 
         return -tf.math.reduce_mean(profits)
         
     return nvps_loss
 
-def make_nvp_loss(underage, overage):
+def make_nvp_loss():
     """ Create a custom loss function for the newsvendor problem without substitution
-    
-    Parameters
-    ---------
-    underage : np.array
-        underage costs
-    overage : np.array
-        overage costs
 
     Returns
     ---------
     nvp_loss : function
         Custom loss function
     """
+    global underage, overage
     q = underage / (underage + overage)
     @tf.autograph.experimental.do_not_convert
     def nvp_loss(y_true, y_pred):
@@ -672,37 +617,24 @@ def make_nvp_loss(underage, overage):
         return tf.keras.backend.mean(tf.maximum(q*error, (q-1)*error), axis=-1)
     return nvp_loss
 
-def create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, custom_loss, output_shape, seed=42): 
+def create_NN_model(n_hidden:int, n_neurons:int, activation:str, input_shape:int, learning_rate:float, custom_loss, output_shape:int): 
     """ Build a neural network model with the specified architecture and hyperparameters    
     
     Parameters
     --------
-    n_hidden : int
-        number of hidden layers
-    n_neurons : int
-        number of neurons per hidden layer
-    activation : str
-        activation function
-    input_shape : int
-        number of features
-    learning_rate : float
-        learning rate
-    custom_loss : function
-        custom loss function
-    output_shape : int
-        number of products
-    seed : int
-        random seed
+    n_hidden : number of hidden layers
+    n_neurons : number of neurons per hidden layer
+    activation : activation function
+    input_shape : number of features
+    learning_rate : learning rate
+    custom_loss : custom loss function
+    output_shape : number of products
 
     Returns
     --------
     model : keras model
         Neural network model
     """
-    # set seed for reproducability
-    tf.random.set_seed(seed)
-    np.random.seed(seed)
-
     # define the model
     model = Sequential()
     model.add(Input(shape=(input_shape,)))
@@ -713,53 +645,21 @@ def create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate,
     model.compile(loss=custom_loss, optimizer=optimizer, metrics=None)
     return model
 
-def create_NN_multi(n_hidden, n_neurons, activation, input_shape, learning_rate, output_shape, seed=42):
-    """ Create a neural network model for the multi-product newsvendor problem under substitution"""
-    global alpha, underage, overage
-    loss = make_nvps_loss(alpha=alpha, underage=underage, overage=overage)
-    return create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed)
-
-def create_NN_single(n_hidden, n_neurons, activation, input_shape, learning_rate, output_shape, seed=42):
-    """ Create a neural network model for the single-product newsvendor problem without substitution"""
-    global alpha, underage, overage
-    loss = make_nvp_loss(underage=underage, overage=overage)
-    return create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed)
-
-def create_NN_basic(n_hidden, n_neurons, activation, input_shape, learning_rate, output_shape, seed=42):
-    """ Create a neural network model without a custom loss function"""
-    loss = tf.keras.losses.MeanSquaredError()
-    get_custom_objects().update({'custom_loss': loss})
-    return create_NN_model(n_hidden, n_neurons, activation, input_shape, learning_rate, loss, output_shape, seed)
-
-def tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_input, underage_input, overage_input, patience=10, multi=True, integrated=True, verbose=0, seed=42, threads=40, trials=100):
+def tune_NN_model_optuna(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, integrated:bool, patience:int=10, 
+                         verbose:int=0, trials:int=100, seed:int=42, threads:int=40):
     """ Tune a neural network model on the given training data with early stopping using Optuna.
     
     Parameters
     --------------
-    X_train : np.array
-        training feature data (samples, features)
-    y_train : np.array
-        training targets (samples, N_PRODUCTS)
-    X_val : np.array
-        validation feature data (samples, features)
-    y_val : np.array
-        validation targets (samples, N_PRODUCTS)
+    X_train : training feature data (samples, features)
+    y_train : training targets (samples, N_PRODUCTS)
+    X_val : validation feature data (samples, features)
+    y_val : validation targets (samples, N_PRODUCTS)
     alpha_input : np.array
-        Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
-    underage_input : np.array
-        underage costs, shape (1, N_PRODUCTS)
-    overage_input : np.array
-        overage costs, shape (1, N_PRODUCTS)    
-    patience : int
-        number of epochs without improvement before stopping
-    multi : bool
-        if True, all products are considered, if False, only product 1 is considered
-    integrated : bool
-        if True, the optimization is integrated, if False, the optimization is separate
-    verbose : int
-        keras' verbose parameter for silent / verbose model training
-    seed : int
-        random seed (affects mainly model initialization, set for reproducable results)
+    Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
+    patience : number of epochs without improvement before stopping
+    verbose : keras' verbose parameter for silent / verbose model training
+    trials : number of trials for the hyperparameter optimization
 
     Returns
     ----------
@@ -770,17 +670,16 @@ def tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_input, underage_i
     study.best_value : float
         Best profit found by Optuna
     """
-    # Load problem information
     global alpha, underage, overage
-    if alpha_input is not None:
-        alpha = alpha_input
-    underage = underage_input
-    overage = overage_input
+
+    # set seed for reproducability
+    tf.random.set_seed(seed)
+    np.random.seed(seed)
 
     # define dimensions
     output_shape = y_train.shape[1] #N_PRODUCTS
     input_shape = X_train.shape[1] #N_FEATURES
-    
+
     # Optuna hyperparameter optimization
     def objective(trial):
         # define the hyperparameters space
@@ -794,94 +693,85 @@ def tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_input, underage_i
         # create a neural network model with basic hyperparameters
         early_stopping = EarlyStopping(monitor='val_loss', patience=patience)
 
-        
         # construct loss function based on the number of products
         if not integrated:
-            model_ANN = KerasRegressor(model=create_NN_basic, n_hidden=n_hidden, n_neurons=n_neurons, activation=activation,
-                                    input_shape=input_shape, learning_rate=learning_rate, output_shape=output_shape, 
-                                    seed=seed, verbose=verbose, callbacks=[early_stopping])
-        elif not multi and integrated:
-            model_ANN = KerasRegressor(model=create_NN_single, n_hidden=n_hidden, n_neurons=n_neurons, activation=activation,
-                                input_shape=input_shape, learning_rate=learning_rate, output_shape=output_shape, 
-                                seed=seed, verbose=verbose, callbacks=[early_stopping])
-        elif multi and integrated: 
-            model_ANN = KerasRegressor(model=create_NN_multi, n_hidden=n_hidden, n_neurons=n_neurons, activation=activation,
-                                input_shape=input_shape, learning_rate=learning_rate, output_shape=output_shape, 
-                                seed=seed, verbose=verbose, callbacks=[early_stopping])
+            custom_loss="mean_squared_error"
+            model_ANN = KerasRegressor(model=create_NN_model, n_hidden=n_hidden, n_neurons=n_neurons, activation=activation,
+                                input_shape=input_shape, learning_rate=learning_rate, custom_loss=custom_loss, output_shape=output_shape,
+                                callbacks=[early_stopping])
+        elif output_shape == 1 and integrated:
+            print("Creating single product model")
+            custom_loss = make_nvp_loss() 
+            model_ANN = KerasRegressor(model=create_NN_model, n_hidden=n_hidden, n_neurons=n_neurons, activation=activation,
+                                input_shape=input_shape, learning_rate=learning_rate, custom_loss=custom_loss, output_shape=output_shape,
+                                callbacks=[early_stopping])
+            print(model_ANN)
+        elif output_shape != 1 and integrated: 
+            custom_loss = make_nvps_loss()
+            model_ANN = KerasRegressor(model=create_NN_model, n_hidden=n_hidden, n_neurons=n_neurons, activation=activation,
+                                input_shape=input_shape, learning_rate=learning_rate, custom_loss=custom_loss, output_shape=output_shape,
+                                callbacks=[early_stopping])
         else:
             raise ValueError('Invalid Configuration')
         
 
         #pruning_callback = KerasPruningCallback(trial, 'val_loss')
         model_ANN.fit(X_train, y_train, validation_data=(X_val, y_val),  epochs=epochs, batch_size=batch_size, verbose=verbose) #, callbacks=[pruning_callback]
-
         # make predictions on validation set and compute profits
         q_val = model_ANN.predict(X_val)
 
         # If integrated, we can use the profit function, 
         #       otherwise we use the negative absolute error (otherwise we would "cheat")
         if integrated:
-            result = np.mean(nvps_profit(y_val, q_val, alpha, underage, overage))
+            result = np.mean(nvps_profit(y_val, q_val))
         else:
             result = -np.abs(np.mean(q_val-y_val))
 
         return result
     study = optuna.create_study(direction='maximize')
     study.optimize(objective, n_trials=trials, n_jobs=threads)
-
     # Get the best parameters and best estimator
     best_params = study.best_params
-    best_estimator = None
     hyperparameter = [best_params['n_hidden'], best_params['n_neurons'],best_params['learning_rate'], 
                     best_params['epochs'], patience, best_params['batch_size'], best_params['activation']]
+    best_estimator = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, integrated)
     
     return best_estimator, hyperparameter, study.best_value
 
-def train_NN_model(hp, X_train, y_train, X_val, y_val, alpha, underage, overage, multi=True, integrated=True, verbose=0, seed=42):
+def train_NN_model(hp:list, X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, integrated:bool, verbose:int=0):
     """ Train a network on the given training data with early stopping.
     
     Parameters
     --------------
-    hp : list or tupl
-        hyperparameters in the following order: hidden_nodes, lr, max_epochs, patience, batch_size
-    X_train : np.array
-        training feature data
-    y_train : np.array
-        training targets
-    X_train : np.array
-        validation feature data
-    y_train : np.array
-        validation targets
-    alpha : np.array
-        Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
-    u : np.array
-        underage costs, shape (1, N_PRODUCTS)
-    o : np.array
-        overage costs, shape (1, N_PRODUCTS)
-    verbose : int
-        keras' verbose parameter for silent / verbose model training
-    seed : int
-        random seed (affects mainly model initialization, set for reproducable results)
+    hp : hyperparameters in the following order: hidden_nodes, lr, max_epochs, patience, batch_size
+    X_train : training feature data
+    y_train : training targets
+    X_val : validation feature data
+    y_val : validation targets
+    verbose : keras' verbose parameter for silent / verbose model training
 
     Returns
     ----------
     model : keras model
         Final model
     """
+    global alpha, underage, overage
+    # define dimensions
+    output_shape = y_train.shape[1] #N_PRODUCTS
 
     # construct loss function based on the number of products
-    if integrated == False:
+    if  integrated == False:
         loss = tf.keras.losses.MeanSquaredError()
-    elif (multi == False) & (integrated == True):
-        loss = make_nvp_loss(underage, overage)
-    elif (multi == True) & (integrated == True): 
-        loss = make_nvps_loss(alpha, underage, overage)
+    elif (output_shape == 1) & ( integrated == True):
+        loss =  make_nvp_loss()
+    elif (output_shape != 1) & ( integrated == True): 
+        loss =  make_nvps_loss()
 
     # extract hyperparameters, build and compile MLP
     hidden_nodes, n_neurons, lr, max_epochs, patience, batch_size, activation = hp
-    mlp = create_NN_model(n_hidden=hidden_nodes, n_neurons=n_neurons, activation=activation, 
-                          input_shape=X_train.shape[1], learning_rate=lr, custom_loss=loss, 
-                          output_shape=y_train.shape[1], seed=seed)
+    mlp =  create_NN_model(n_hidden=hidden_nodes, n_neurons=n_neurons, activation=activation, 
+                        input_shape=X_train.shape[1], learning_rate=lr, custom_loss=loss, 
+                        output_shape=y_train.shape[1])
 
     # train MLP with early stopping
     callback = EarlyStopping(monitor='val_loss', patience=patience)
@@ -890,436 +780,469 @@ def train_NN_model(hp, X_train, y_train, X_val, y_val, alpha, underage, overage,
     
     return mlp
 
-######################### LightGBM Functions ######################################################################
+######################### XGBoost Functions ######################################################################
 
-def gradient(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
-    
-    if isinstance(dtrain, np.ndarray):
-        dtrain = xgb.DMatrix(dtrain)
+def gradient(predt: np.ndarray, dtrain: xgb.DMatrix, ) -> np.ndarray:
+    """ Calculate the gradient of the custom loss function"""
     global alpha, underage, overage
-    y = dtrain.get_label().reshape(predt.shape)
-    d = y + np.matmul(np.maximum(0, y - predt), alpha)
-    u = np.array(underage)
-    o = np.array(overage)
-    u = u.T
-    o = o.T
-    return (-(u * np.maximum(0,d-predt) - o * np.maximum(0, predt-d))).reshape(y.size)
+    try:
+        y = dtrain.get_label().reshape(predt.shape)
+        d = y + np.matmul(np.maximum(0, y - predt), alpha)
+        u = underage.T
+        o = overage.T
+        return (-(u * np.maximum(0,d-predt) - o * np.maximum(0, predt-d))).reshape(y.size)
+    except:
+        logger.error(f"Error calculating gradient: {e}")
+        raise
                 
 def hessian(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
-    return np.ones(predt.shape).reshape(predt.size)
+        """ Calculate the hessian of the custom loss function"""
+        return np.ones(predt.shape).reshape(predt.size)
         
 def custom_loss(predt: np.ndarray, dtrain: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    grad = gradient(predt, dtrain)
-    hess = hessian(predt, dtrain)
+        """ Calculate the gradient and hessian of the custom loss function"""
+        grad =  gradient(predt, dtrain)
+        hess =  hessian(predt, dtrain)
+        return grad, hess
 
-    return grad, hess
+def tune_XGB_model(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, 
+                   integrated:bool, patience:int=10, verbose:int=0, trials:int=100, threads:int=40):
+        """ Tune a XGBoost model on the given training data with early stopping using Optuna.
+        
+        Parameters
+        --------------
+        X_train : training feature data (samples, features)
+        y_train : training targets (samples, N_PRODUCTS)
+        X_val : validation feature data (samples, features)
+        y_val : validation targets (samples, N_PRODUCTS)
+        patience : number of epochs without improvement before stopping
+        verbose : verbosity level
+        trials : number of trials for the optimization
+        
+        Returns
+        ----------
+        final_booster : xgb.Booster
+            Final model
+        best_params : dict
+            Best hyperparameters found by Optuna
+        results : dict
+            Results of the optimization
+        """
+        global alpha, underage, overage
 
-def tune_XGB_model(X_train, y_train, X_val, y_val, alpha_input, underage_input, overage_input, patience=10, multi=True, integrated=True, verbose=0, seed=42, threads=40, trials=100):
-    
-    global alpha, underage, overage
-    if alpha_input is not None:
-        alpha = alpha_input
-    underage = underage_input
-    overage = overage_input
+        if y_train.shape[1] == 1 and integrated == True:
+            multi_strategy = "one_output_per_tree"
+            custom_objective = "reg:quantileerror"
+            quantile = underage / (underage + overage)
+        elif y_train.shape[1] != 1 and integrated == True:
+            multi_strategy = "multi_output_tree"
+            custom_objective = custom_loss
+            quantile = 0
+        elif y_train.shape[1] == 1 and integrated == False:
+            multi_strategy = "one_output_per_tree"
+            custom_objective = 'reg:squarederror'
+            quantile = 0
+        elif y_train.shape[1] != 1 and integrated == False:
+            multi_strategy = "multi_output_tree"
+            custom_objective = "reg:squarederror"
+            quantile = 0
+        else:
+            raise ValueError('Invalid Configuration')
 
-    if y_train.shape[1] == 1 and integrated == True:
-        multi_strategy = "one_output_per_tree"
-        custom_objective = "reg:quantileerror"
-        quantile = underage / (underage + overage)
-    elif y_train.shape[1] != 1 and integrated == True:
-        multi_strategy = "multi_output_tree"
-        custom_objective = custom_loss
-        quantile = 0
-    elif y_train.shape[1] == 1 and integrated == False:
-        multi_strategy = "one_output_per_tree"
-        custom_objective = 'reg:squarederror'
-        quantile = 0
-    elif y_train.shape[1] != 1 and integrated == False:
-        multi_strategy = "multi_output_tree"
-        custom_objective = "reg:squarederror"
-        quantile = 0
-    else:
-        raise ValueError('Invalid Configuration')
+        # Transform training and validation data to DMatrix
+        X, y = X_train, y_train  
+        Xy = xgb.DMatrix(X, label=y)
+        dval = xgb.DMatrix(X_val, label=y_val)
+        
+        results = {} # initialize results dict
+        
+        # Optuna hyperparameter optimization
+        def objective(trial):
+            # if custom objective is used, we need to pass the custom loss function
+            if custom_objective != custom_loss:
+                params = {
+                    "tree_method": "hist",
+                    "num_target": y.shape[1],
+                    "multi_strategy": multi_strategy,
+                    "learning_rate": trial.suggest_float("learning_rate", 0.1, 0.5),
+                    "max_depth": trial.suggest_int("max_depth", 2, 6),
+                    "subsample": trial.suggest_float("subsample", 0.3, 0.9),
+                    "quantile_alpha": quantile,
+                    "objective": custom_objective,
+                }
+                booster = xgb.train(
+                    params,
+                    dtrain=Xy,
+                    num_boost_round=128,
+                    evals=[(dval, "val")],
+                    evals_result=results,
+                    early_stopping_rounds=patience,
+                    verbose_eval=verbose                
+                )
+            # if no custom objective is used, we can use the default objective
+            else:
+                params = {
+                    "tree_method": "hist",
+                    "num_target": y.shape[1],
+                    "multi_strategy": multi_strategy,
+                    "learning_rate": trial.suggest_float("learning_rate", 0.1, 0.5),
+                    "max_depth": trial.suggest_int("max_depth", 2, 6),
+                    "subsample": trial.suggest_float("subsample", 0.3, 0.9),
+                    "quantile_alpha": quantile,
+                }
+                booster = xgb.train(
+                params,
+                    dtrain=Xy,
+                    num_boost_round=128,
+                    obj=custom_objective,
+                    evals=[(dval, "val")],
+                    evals_result=results,
+                    early_stopping_rounds=patience,
+                    verbose_eval=verbose
+                )
+        
+            # make predictions on validation set and compute profits
+            val_set = xgb.DMatrix(X_val)
+            q_val = booster.predict(val_set)
 
-    print("Test - memory")
-    X, y = X_train, y_train  
-    print(np.isnan(X).any())
-    print(np.isnan(y).any())
-    Xy = xgb.DMatrix(X, label=y)
-    print(np.isnan(X_val).any())
-    print(np.isnan(y_val).any())
-    dval = xgb.DMatrix(X_val, label=y_val)
-    results = {}
-    def objective(trial):
-        if custom_objective != custom_loss:
-            params = {
+            # If integrated, we can use the profit function, 
+            #       otherwise we use the negative absolute error (otherwise we would "cheat")
+            if integrated:
+                result = np.mean(nvps_profit(y_val, q_val))
+            else:
+                result = -np.abs(np.mean(q_val-y_val))
+            return result
+
+        # Create the study and optimize the objective function
+        study = optuna.create_study(direction="maximize")
+        study.optimize(objective, n_trials=trials, n_jobs=threads)  
+
+        # Get the best parameters
+        best_params = study.best_trial.params
+
+        # Add the fixed parameters
+        if custom_objective !=  custom_loss:
+            best_params.update({
                 "tree_method": "hist",
                 "num_target": y.shape[1],
                 "multi_strategy": multi_strategy,
-                "learning_rate": trial.suggest_float("learning_rate", 0.1, 0.5),
-                "max_depth": trial.suggest_int("max_depth", 2, 6),
-                "subsample": trial.suggest_float("subsample", 0.3, 0.9),
                 "quantile_alpha": quantile,
-                "verbosity:": verbose,
                 "objective": custom_objective,
-            }
-            booster = xgb.train(
-                params,
+            })
+        else:
+            best_params.update({
+                "tree_method": "hist",
+                "num_target": y.shape[1],
+                "multi_strategy": multi_strategy,
+            })
+
+        # Train the final model
+        if custom_objective != custom_loss:
+            final_booster = xgb.train(
+                best_params,
                 dtrain=Xy,
                 num_boost_round=128,
-                #obj=custom_objective,
                 evals=[(dval, "val")],
-                evals_result=results,
-                early_stopping_rounds=patience,
-                verbose_eval=verbose                
+                verbose_eval=verbose
             )
         else:
-            params = {
-                "tree_method": "hist",
-                "num_target": y.shape[1],
-                "multi_strategy": multi_strategy,
-                "learning_rate": trial.suggest_float("learning_rate", 0.1, 0.5),
-                "max_depth": trial.suggest_int("max_depth", 2, 6),
-                "n_estimators": trial.suggest_int("n_estimators", 100, 140),    #????????
-                "subsample": trial.suggest_float("subsample", 0.3, 0.9),
-                "quantile_alpha": quantile,
-                "verbosity:": verbose,
-                #"objective": custom_objective,
-            }
-            booster = xgb.train(
-            params,
+            final_booster = xgb.train(
+                best_params,
                 dtrain=Xy,
                 num_boost_round=128,
                 obj=custom_objective,
                 evals=[(dval, "val")],
-                evals_result=results,
-                early_stopping_rounds=patience,
                 verbose_eval=verbose
             )
-       
-         # make predictions on validation set and compute profits
-        val_set = xgb.DMatrix(X_val)
-        q_val = booster.predict(val_set)
+        # return the final model, best parameters and results
+        return final_booster, best_params, results
 
-        # If integrated, we can use the profit function, 
-        #       otherwise we use the negative absolute error (otherwise we would "cheat")
-        if integrated:
-            result = np.mean(nvps_profit(y_val, q_val, alpha, underage, overage))
-        else:
-            result = -np.abs(np.mean(q_val-y_val))
+def train_XGB_model(hyperparameter:dict, X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array):
+        """ Train a XGBoost model on the given training data with given hyperparameters.
 
-        return result
+        Parameters
+        --------------
+        hyperparameter : hyperparameters for the XGBoost model
+        X_train : training feature data
+        y_train : training targets
+        X_val : validation feature data
+        y_val : validation targets
 
-    study = optuna.create_study(direction="maximize")
-    study.optimize(objective, n_trials=trials, n_jobs=threads)  
-
-    trial = study.best_trial
-    for key, value in trial.params.items():
-        print("    {}: {}".format(key, value))
-
-    # Get the best parameters
-    best_params = study.best_trial.params
-
-    # Add the fixed parameters
-    if custom_objective != custom_loss:
-        best_params.update({
-            "tree_method": "hist",
-            "num_target": y.shape[1],
-            "multi_strategy": multi_strategy,
-            "quantile_alpha": quantile,
-            "objective": custom_objective,
-            "verbosity:": verbose,
-        })
-    else:
-        best_params.update({
-            "tree_method": "hist",
-            "num_target": y.shape[1],
-            "multi_strategy": multi_strategy,
-            "verbosity": verbose,
-        })
-
-    # Train the final model
-    if custom_objective != custom_loss:
+        Returns
+        ----------
+        final_booster : xgb.Booster
+            Final model
+        """
+        # Train the final model
+        Xy = xgb.DMatrix(X_train, label=y_train)
+        dval = xgb.DMatrix(X_val, label=y_val)
         final_booster = xgb.train(
-            best_params,
+            hyperparameter,
             dtrain=Xy,
             num_boost_round=128,
-            #obj=custom_objective,
-            evals=[(dval, "val")],
-            verbose_eval=verbose
+            obj= custom_loss,
+            evals=[(dval, "val")]
         )
-    else:
-        final_booster = xgb.train(
-            best_params,
-            dtrain=Xy,
-            num_boost_round=128,
-            obj=custom_objective,
-            evals=[(dval, "val")],
-            verbose_eval=verbose
-        )
-
-
-    return final_booster, best_params, results
-
-def train_XGB_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data):
-
-    global alpha, underage, overage
-    alpha = alpha_data
-    underage = underage_data.flatten()
-    overage = overage_data.flatten()
-
-    # Train the final model
-    Xy = xgb.DMatrix(X_train, label=y_train)
-    results = {}
-    
-    final_booster = xgb.train(
-        hyperparameter,
-        dtrain=Xy,
-        num_boost_round=128,
-        obj=custom_loss,
-        evals=[(Xy, "Train")]
-    )
-    return final_booster, results
+        return final_booster
 
 ############################################################### Approach Handler ########################################################
 
-def ioa_ann_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, trials, dataset_id, path):
+def ioa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
+                   underage_data_single:np.array, overage_data_single:np.array, trials:int, dataset_id:str, path:str):
     """ Train and evaluate the integrated optimization approach with a simple ANN model and saves model, hyperparameters and profit
 
     Parameters
     ----------
-    X_train : np.array
-        training feature data
-    y_train : np.array
-        training targets
-    X_val : np.array
-        validation feature data
-    y_val : np.array
-        validation targets
-    X_test : np.array
-        testing feature data
-    y_test : np.array
-        testing targets
-    underage_data_single : np.array
-        underage costs
-    overage_data_single : np.array
-        overage costs
-    dataset_id : int
-        dataset identifier
-    path : str
-        path to save the model
+    X_train : training feature data
+    y_train : training targets
+    X_val : validation feature data
+    y_val : validation targets
+    X_test : testing feature data
+    y_test : testing targets
+    underage_data_single : underage costs
+    overage_data_single : overage costs
+    dataset_id : dataset identifier
+    path : path to save the model
     """
-    # Integrated Optimization Approach - ANN - simple:
-    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False, trials=trials)
-    model_ANN_simple = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False)
-    target_prediction_ANN = model_ANN_simple.predict(X_test)
-    profit_simple_ANN_IOA = np.mean(nvps_profit(y_test, target_prediction_ANN, None, underage_data_single, overage_data_single))
-    
-    # Create a dictionary 
-    data = {
-        'model': model_ANN_simple,
-        'hyperparameter': hyperparameter,
-        'profit': profit_simple_ANN_IOA
-    }
-    file_name = str(dataset_id) + '_ANN_simple_IOA' + '.pkl'
-    path_name = str(path) + file_name
-    # Pickle the dictionary into one file
-    with open(path_name, 'wb') as f:
-        pickle.dump(data, f)
 
-def soa_ann_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, trials, dataset_id, path):
-    """
-    Train and evaluate the seperate optimization approach with a simple ANN model and saves model, hyperparameters and profit
+    # Integrated Optimization Approach - ANN - simple:
+    load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single)
+    model_ANN_simple, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=True, trials=trials)
+    target_prediction_ANN = model_ANN_simple.predict(X_test)
+    profit_simple_ANN_IOA = np.mean(nvps_profit(demand=y_test, q=target_prediction_ANN))
+    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit_1=profit_simple_ANN_IOA, profit_2=None, dataset_id=dataset_id, path=path, name='ANN_simple_IOA')
+
+def soa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
+                   underage_data_single:np.array, overage_data_single:np.array, trials:int, dataset_id:str, path:str):
+    """ Train and evaluate the seperate optimization approach with a simple ANN model and saves model, hyperparameters and profit
 
     Parameters
     ----------
-    X_train : np.array
-        training feature data
-    y_train : np.array
-        training targets
-    X_val : np.array
-        validation feature data
-    y_val : np.array
-        validation targets
-    X_test : np.array
-        testing feature data
-    y_test : np.array
-        testing targets
-    underage_data_single : np.array
-        underage costs
-    overage_data_single : np.array
-        overage costs
-    dataset_id : int
-        dataset identifier
-    path : str
-        path to save the model
+    X_train : training feature data
+    y_train : training targets
+    X_val : validation feature data
+    y_val : validation targets
+    X_test : testing feature data
+    y_test : testing targets
+    underage_data_single : underage costs
+    overage_data_single : overage costs
+    dataset_id : dataset identifier
+    path : path to save the model
     """
     # Seperate Optimization Approach - ANN - simple:
-    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single, multi = False, integrated = False, trials=trials)   
-    model_ANN_simple = train_NN_model(hp=hyperparameter, X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha=None, underage=underage_data_single, overage=overage_data_single, multi = False, integrated = False)
+    load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single)
+    model_ANN_simple, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=False, trials=trials)
     target_prediction_ANN = model_ANN_simple.predict(X_test)
     train_prediction_ANN = model_ANN_simple.predict(X_train)
-    orders_ssp_ann, orders_ssnp_ann = solve_basic_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN, u=underage_data_single, o=overage_data_single)
-    profit_ssp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_ssp_ann, alpha=None, u=underage_data_single, o=overage_data_single))
-    profit_ssnp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_ssnp_ann, alpha=None, u=underage_data_single, o=overage_data_single))
-    
-    # Create a dictionary 
-    data = {
-        'model': model_ANN_simple,
-        'hyperparameter': hyperparameter,
-        'profit_p': profit_ssp_ANN,
-        'profit_np': profit_ssnp_ANN
-    }
-    file_name = str(dataset_id) + '_ANN_simple_SOA' + '.pkl'
-    path_name = str(path) + file_name
-    # Pickle the dictionary into one file
-    with open(path_name, 'wb') as f:
-        pickle.dump(data, f)
+    orders_ssp_ann, orders_ssnp_ann = solve_basic_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
+    profit_ssp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_ssp_ann))
+    profit_ssnp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_ssnp_ann))
+    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit_1=profit_ssp_ANN, profit_2=profit_ssnp_ANN, dataset_id=dataset_id, path=path, name='ANN_simple_SOA')
 
-def ioa_xgb_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, trials, dataset_id, path):
+def ioa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
+                   underage_data_single:np.array, overage_data_single:np.array, trials:int, dataset_id:str, path:str):
+    """ Train and evaluate the integrated optimization approach with a simple XGBoost model and saves model, hyperparameters and profit
+
+    Parameters
+    ----------
+    X_train : training feature data
+    y_train : training targets
+    X_val : validation feature data
+    y_val : validation targets
+    X_test : testing feature data
+    y_test : testing targets
+    underage_data_single : underage costs
+    overage_data_single : overage costs
+    dataset_id : dataset identifier
+    path : path to save the model
+    """
     # Integrated Optimization Approach - XGBoost - Simple:
-    try:
-        xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single, multi=False, integrated=True, trials=trials)
-    except AssertionError:
-        print("An error occurred while tuning the XGBoost model. - IOA simple")
+    load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single)
+    xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=True, trials=trials)
     xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
-    profit_simple_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result, alpha=None, u=underage_data_single, o=overage_data_single))
-    
-    # Create a dictionary
-    data = {
-        'model': xgb_model,
-        'hyperparameter': params,
-        'profit': profit_simple_XGB_IOA
-    }
-    file_name = str(dataset_id) + '_XGB_simple_IOA' + '.pkl'
-    path_name = str(path) + file_name
-    # Pickle the dictionary into one file
-    with open(path_name, 'wb') as f:
-        pickle.dump(data, f)
+    profit_simple_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result))
+    save_model(model=xgb_model, hyperparameter=params, profit_1=profit_simple_XGB_IOA, profit_2=None, dataset_id=dataset_id, path=path, name='XGB_simple_IOA')
 
-def soa_xgb_simple(X_train, y_train, X_val, y_val, X_test, y_test, underage_data_single, overage_data_single, trials, dataset_id, path):
+def soa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
+                   underage_data_single:np.array, overage_data_single:np.array, trials:int, dataset_id:str, path:str):
+    """ Train and evaluate the seperate optimization approach with a simple XGBoost model and saves model, hyperparameters and profit
+
+    Parameters
+    ----------
+    X_train : training feature data
+    y_train : training targets
+    X_val : validation feature data
+    y_val : validation targets
+    X_test : testing feature data
+    y_test : testing targets
+    underage_data_single : underage costs
+    overage_data_single : overage costs
+    dataset_id : dataset identifier
+    path : path to save the model
+    """
     # Seperated Optimization Approach - XGBoost - Simple:
-    try: 
-        xgb_model, hyperparameter_XGB_SOA_Complex, val_profit = tune_XGB_model(X_train, y_train, X_val, y_val, None, underage_data_single, overage_data_single, multi = False, integrated = False, trials=trials)
-    except AssertionError:
-            print("An error occurred while tuning the XGBoost model. - SOA simple")
-
+    load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single)
+    xgb_model, hyperparameter_XGB_SOA_Complex, val_profit = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=False, trials=trials)
     target_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_test))
     train_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_train))  
-    orders_ssp_XGB, orders_ssnp_XGB = solve_basic_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB, u=underage_data_single, o=overage_data_single)
-    profit_ssp_XGB = np.mean(nvps_profit(y_test, orders_ssp_XGB, None, underage_data_single, overage_data_single))
-    profit_ssnp_XGB = np.mean(nvps_profit(y_test, orders_ssnp_XGB, None, underage_data_single, overage_data_single))
+    orders_ssp_XGB, orders_ssnp_XGB = solve_basic_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
+    profit_ssp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_ssp_XGB))
+    profit_ssnp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_ssnp_XGB))
 
-    # Create a dictionary
-    data = {
-        'model': xgb_model,
-        'hyperparameter': hyperparameter_XGB_SOA_Complex,
-        'profit_p': profit_ssp_XGB,
-        'profit_np': profit_ssnp_XGB
-    }
-    file_name = str(dataset_id) + '_XGB_simple_SOA' + '.pkl'
-    path_name = str(path) + file_name
-    # Pickle the dictionary into one file
-    with open(path_name, 'wb') as f:
-        pickle.dump(data, f)
+    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit_1=profit_ssp_XGB, profit_2=profit_ssnp_XGB, dataset_id=dataset_id, path=path, name='XGB_simple_SOA')
 
-def ioa_ann_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, trials, dataset_id, path):
+def ioa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
+                    alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
+    """ Train and evaluate the integrated optimization approach with a complex ANN model and saves model, hyperparameters and profit
+    
+    Parameters
+    ----------
+    X_train : training feature data
+    y_train : training targets
+    X_val : validation feature data
+    y_val : validation targets
+    X_test : testing feature data
+    y_test : testing targets
+    alpha_data : substitution rates
+    underage_data : underage costs
+    overage_data : overage costs
+    dataset_id : dataset identifier
+    path : path to save the model
+    """
     # Integrated Optimization Approach - ANN - complex:
-    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data, trials=trials)
-    model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data)
+    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data)
+    model_ANN_complex, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=True, trials=trials)
     target_prediction_ANN = model_ANN_complex.predict(X_test)
-    profit_complex_ANN_IOA = np.mean(nvps_profit(y_test, target_prediction_ANN, alpha_data, underage_data, overage_data))
+    profit_complex_ANN_IOA = np.mean(nvps_profit(demand=y_test, q=target_prediction_ANN))
+    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit_1=profit_complex_ANN_IOA, profit_2=None, dataset_id=dataset_id, path=path, name='ANN_complex_IOA')
 
-    # Create a dictionary
-    data = {
-        'model': model_ANN_complex,
-        'hyperparameter': hyperparameter,
-        'profit': profit_complex_ANN_IOA
-    }
-    file_name = str(dataset_id) + '_ANN_complex_IOA' + '.pkl'
-    path_name = str(path) + file_name
-    # Pickle the dictionary into one file
-    with open(path_name, 'wb') as f:
-        pickle.dump(data, f)
+def soa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
+                    alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
+    """ Train and evaluate the seperate optimization approach with a complex ANN model and saves model, hyperparameters and profit
 
-def soa_ann_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, trials, dataset_id, path):
+    Parameters
+    ----------
+    X_train : training feature data
+    y_train : training targets
+    X_val : validation feature data
+    y_val : validation targets
+    X_test : testing feature data
+    y_test : testing targets
+    alpha_data : substitution rates
+    underage_data : underage costs
+    overage_data : overage costs
+    dataset_id : dataset identifier
+    path : path to save the model
+    """
     # Seperate Optimization Approach - ANN - complex:
-    best_estimator, hyperparameter, val_profit = tune_NN_model_optuna(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True, integrated = False, trials=trials)
-    model_ANN_complex = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True,  integrated = False)
+    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data)
+    model_ANN_complex, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=False, trials=trials)
     target_prediction_ANN = model_ANN_complex.predict(X_test)
     train_prediction_ANN = model_ANN_complex.predict(X_train)
-    orders_scp_ann, orders_scnp_ann = solve_complex_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN, u=underage_data, o=overage_data, alpha=alpha_data)
-    profit_scp_ANN = np.mean(nvps_profit(y_test, orders_scp_ann, alpha_data, underage_data, overage_data))
-    profit_scnp_ANN = np.mean(nvps_profit(y_test, orders_scnp_ann, alpha_data, underage_data, overage_data))
+    orders_scp_ann, orders_scnp_ann = solve_complex_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
+    profit_scp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_scp_ann))
+    profit_scnp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_scnp_ann))
+    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit_1=profit_scp_ANN, profit_2=profit_scnp_ANN, dataset_id=dataset_id, path=path, name='ANN_complex_SOA')
 
-    # Create a dictionary
-    data = {
-        'model': model_ANN_complex,
-        'hyperparameter': hyperparameter,
-        'profit_p': profit_scp_ANN,
-        'profit_np': profit_scnp_ANN
-    }
-    file_name = str(dataset_id) + '_ANN_complex_SOA' + '.pkl'
-    path_name = str(path) + file_name
-    # Pickle the dictionary into one file
-    with open(path_name, 'wb') as f:
-        pickle.dump(data, f)
-
-def ioa_xgb_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, trials, dataset_id, path):
-    # Integrated Optimization Approach - XGBoost - Complex:
-    xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data, integrated=True, trials=trials)
-    xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
-    profit_complex_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result, alpha=alpha_data, u=underage_data, o=overage_data))    
+def ioa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
+                    alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
+    """ Train and evaluate the integrated optimization approach with a complex XGBoost model and saves model, hyperparameters and profit
     
-    # Create a dictionary
-    data = {
-        'model': xgb_model,
-        'hyperparameter': params,
-        'profit': profit_complex_XGB_IOA
-    }
-    file_name = str(dataset_id) + '_XGB_complex_IOA' + '.pkl'
-    path_name = str(path) + file_name
-    # Pickle the dictionary into one file
-    with open(path_name, 'wb') as f:
-        pickle.dump(data, f)
+    Parameters
+    ----------
+    X_train : training feature data
+    y_train : training targets
+    X_val : validation feature data
+    y_val : validation targets
+    X_test : testing feature data
+    y_test : testing targets
+    alpha_data : substitution rates
+    underage_data : underage costs
+    overage_data : overage costs
+    dataset_id : dataset identifier
+    path : path to save the model
+    """
+    # Integrated Optimization Approach - XGBoost - Complex:
+    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data)
+    xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=True, trials=trials)
+    xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
+    profit_complex_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result))    
+    save_model(model=xgb_model, hyperparameter=params, profit_1=profit_complex_XGB_IOA, profit_2=None, dataset_id=dataset_id, path=path, name='XGB_complex_IOA')
 
-def soa_xgb_complex(X_train, y_train, X_val, y_val, X_test, y_test, alpha_data, underage_data, overage_data, trials, dataset_id, path):
+def soa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
+                    alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
+    """ Train and evaluate the seperate optimization approach with a complex XGBoost model and saves model, hyperparameters and profit
+    
+    Parameters
+    ----------
+    X_train : training feature data
+    y_train : training targets
+    X_val : validation feature data
+    y_val : validation targets
+    X_test : testing feature data
+    y_test : testing targets
+    alpha_data : substitution rates
+    underage_data : underage costs
+    overage_data : overage costs
+    dataset_id : dataset identifier
+    path : path to save the model
+    """
     # Seperated Optimization Approach - XGBoost - Complex:
-    xgb_model, hyperparameter_XGB_SOA_Complex, val_profit = tune_XGB_model(X_train, y_train, X_val, y_val, alpha_data, underage_data, overage_data, multi = True, integrated = False, trials=trials)
+    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data)
+    xgb_model, hyperparameter_XGB_SOA_Complex, val_profit = tune_XGB_model(X_train, y_train, X_val, y_val, integrated=False, trials=trials)
     target_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_test))
     train_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_train))
-    orders_scp_XGB, orders_scnp_XGB = solve_complex_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB, u=underage_data, o=overage_data, alpha=alpha_data)
-    profit_scp_XGB = np.mean(nvps_profit(y_test, orders_scp_XGB, alpha_data, underage_data, overage_data))
-    profit_scnp_XGB = np.mean(nvps_profit(y_test, orders_scnp_XGB, alpha_data, underage_data, overage_data))
-
-    # Create a dictionary
-    data = {
-        'model': xgb_model,
-        'hyperparameter': hyperparameter_XGB_SOA_Complex,
-        'profit_p': profit_scp_XGB,
-        'profit_np': profit_scnp_XGB
-    }
-    file_name = str(dataset_id) + '_XGB_complex_SOA' + '.pkl'
-    path_name = str(path) + file_name
-    # Pickle the dictionary into one file
-    with open(path_name, 'wb') as f:
-        pickle.dump(data, f)
+    orders_scp_XGB, orders_scnp_XGB = solve_complex_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
+    profit_scp_XGB = np.mean(nvps_profit(y_test, orders_scp_XGB))
+    profit_scnp_XGB = np.mean(nvps_profit(y_test, orders_scnp_XGB))
+    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit_1=profit_scp_XGB, profit_2=profit_scnp_XGB, dataset_id=dataset_id, path=path, name='XGB_complex_SOA')
 
 def ets_baseline(y_train, y_val, y_test, underage_data, overage_data, alpha_data, fit_past, dataset_id, path):
-    # ETS Forecasting:
-    results_dct, elapse_time = ets_forecast(y_train=y_train, y_val=y_val, y_test_length=y_test.shape[0], fit_past=fit_past)
-    profit_single_ets, profit_multi_ets = ets_evaluate(y_test, results_dct, underage_data, overage_data, alpha_data)
+    """ Train and evaluate the ETS model and saves model, hyperparameters and profit
     
-    # Create a dictionary
+    Parameters
+    ----------
+    y_train : training feature data
+    y_val : validation feature data
+    y_test : testing feature data
+    underage_data : underage costs
+    overage_data : overage costs
+    alpha_data : substitution rates
+    fit_past : number of past periods to fit
+    dataset_id : dataset identifier
+    path : path to save the model
+    """
+    # ETS Forecasting:
+    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data)
+    results_dct, elapse_time = ets_forecast(y_train=y_train, y_val=y_val, y_test_length=y_test.shape[0], fit_past=fit_past)
+    profit_single_ets, profit_multi_ets = ets_evaluate(y_test=y_test, results_dct=results_dct)
+    save_model(model=results_dct, hyperparameter=None, profit_1=profit_single_ets, profit_2=profit_multi_ets, dataset_id=dataset_id, path=path, name='ETS')
+
+
+def save_model(model, hyperparameter, profit_1, profit_2, dataset_id, path, name):
+    """ Save the model, hyperparameters and profits in a pickle file
+
+    Parameters
+    ----------
+    model : model to save
+    hyperparameter : hyperparameters of the model
+    profit_1 : profit 
+    profit_2 : profit 
+    dataset_id : dataset identifier
+    path : path to save the model
+    name : name of the model
+    """
+    # Create a dictionary 
     data = {
-        'elapse_time': elapse_time,
-        'profit_single': profit_single_ets,
-        'profit_multi': profit_multi_ets
+        'model': model,
+        'hyperparameter': hyperparameter,
+        'profit_1': profit_1,
+        'profit_2': profit_2
     }
-    file_name = str(dataset_id) + '_ETS' + '.pkl'
+    file_name = dataset_id +"_"+ name + '.pkl'
     path_name = str(path) + file_name
     # Pickle the dictionary into one file
     with open(path_name, 'wb') as f:
         pickle.dump(data, f)
-
+    
 
