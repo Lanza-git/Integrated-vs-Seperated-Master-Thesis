@@ -1,51 +1,38 @@
-# Data manipulation libraries
+# Standard library imports
+import os
+import pickle
+import datetime
+import logging
+import itertools
+import tracemalloc
+from typing import Tuple
+
+# Third-party imports
 import numpy as np
 import pandas as pd
+from scipy.stats import norm
+from statsmodels.tsa.exponential_smoothing.ets import ETSModel
+import optuna
+from optuna_integration.keras import KerasPruningCallback
+import gurobipy as gp
+from gurobipy import GRB
+import xgboost as xgb
 
-# Scikit-learn libraries for data preprocessing
+# scikit-learn imports
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
-
-# Scikit-learn libraries for model selection and evaluation
-from sklearn.metrics import mean_squared_error
-from sklearn.model_selection import RandomizedSearchCV, train_test_split
-
-# Scikit-learn library for pipeline creation
+from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 
-# TensorFlow and Keras libraries for model creation and training
-from tensorflow.keras.callbacks import EarlyStopping
-from tensorflow.keras.layers import Dense
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.optimizers import Adam
+# TensorFlow and Keras imports
 import tensorflow as tf
-from tensorflow.keras.layers import Input
-
-# Scikit-learn wrapper for Keras
+from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.layers import Dense, Input
+from tensorflow.keras.models import Sequential
+from keras.utils import get_custom_objects
 from scikeras.wrappers import KerasRegressor
 
-# pulp for mathematical optimization
-from pulp import LpProblem, LpMaximize, LpVariable, lpSum, LpBinary, LpStatus, PULP_CBC_CMD
-
-from typing import Tuple
-import xgboost as xgb
-import optuna
-from optuna_integration.keras import KerasPruningCallback
-
-
-import gurobipy as gp
-from gurobipy import GRB
-import pickle
-
-from scipy.stats import norm
-
-import os
-from keras.utils import get_custom_objects
-import datetime
-from statsmodels.tsa.exponential_smoothing.ets import ETSModel
-import itertools
-import logging
 
 alpha = []
 underage = []
@@ -498,7 +485,6 @@ def ets_forecast(y_train:np.array, y_val:np.array, y_test_length:int, verbose:in
 
                 # after evaluation is completed, compute RMSE and MAPE on validation set
                 target_val = target[N_TRAIN:N_TRAIN+N_VAL]
-                print(y_val.shape, target_val.shape, preds.shape)
                 # Ensure preds and target_val have the same shape
                 assert preds.shape == target_val.shape, "preds and target_val must have the same shape"
 
@@ -645,6 +631,7 @@ def create_NN_model(n_hidden:int, n_neurons:int, activation:str, input_shape:int
     model.compile(loss=custom_loss, optimizer=optimizer, metrics=None)
     return model
 
+
 def tune_NN_model_optuna(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, integrated:bool, patience:int=10, 
                          verbose:int=0, trials:int=100, seed:int=42, threads:int=40):
     """ Tune a neural network model on the given training data with early stopping using Optuna.
@@ -700,12 +687,10 @@ def tune_NN_model_optuna(X_train:np.array, y_train:np.array, X_val:np.array, y_v
                                 input_shape=input_shape, learning_rate=learning_rate, custom_loss=custom_loss, output_shape=output_shape,
                                 callbacks=[early_stopping])
         elif output_shape == 1 and integrated:
-            print("Creating single product model")
             custom_loss = make_nvp_loss() 
             model_ANN = KerasRegressor(model=create_NN_model, n_hidden=n_hidden, n_neurons=n_neurons, activation=activation,
                                 input_shape=input_shape, learning_rate=learning_rate, custom_loss=custom_loss, output_shape=output_shape,
                                 callbacks=[early_stopping])
-            print(model_ANN)
         elif output_shape != 1 and integrated: 
             custom_loss = make_nvps_loss()
             model_ANN = KerasRegressor(model=create_NN_model, n_hidden=n_hidden, n_neurons=n_neurons, activation=activation,
@@ -792,7 +777,7 @@ def gradient(predt: np.ndarray, dtrain: xgb.DMatrix, ) -> np.ndarray:
         o = overage.T
         return (-(u * np.maximum(0,d-predt) - o * np.maximum(0, predt-d))).reshape(y.size)
     except:
-        logger.error(f"Error calculating gradient: {e}")
+        logger.error(f"Error calculating gradient")
         raise
                 
 def hessian(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
@@ -1004,13 +989,29 @@ def ioa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     dataset_id : dataset identifier
     path : path to save the model
     """
+    # Initialize for measurement of memory usage and elapsed time
+    start = datetime.datetime.now()
+    tracemalloc.start()
 
     # Integrated Optimization Approach - ANN - simple:
-    load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single)
+    load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single) # Initialize the cost structure
+    # Tune the ANN model with Optuna
     model_ANN_simple, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=True, trials=trials)
+    # Make predictions on the test set
     target_prediction_ANN = model_ANN_simple.predict(X_test)
+    # Calculate the profit of the predictions
     profit_simple_ANN_IOA = np.mean(nvps_profit(demand=y_test, q=target_prediction_ANN))
-    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit_1=profit_simple_ANN_IOA, profit_2=None, dataset_id=dataset_id, path=path, name='ANN_simple_IOA')
+
+    # Measure memory usage and elapsed time
+    memory = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    end = datetime.datetime.now()
+    elapsed = (end-start).total_seconds()
+
+    # Save the model, hyperparameters, profit, time and memory usage
+    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit_1=profit_simple_ANN_IOA, profit_2=None, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='ANN_simple_IOA')
+
+
 
 def soa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                    underage_data_single:np.array, overage_data_single:np.array, trials:int, dataset_id:str, path:str):
@@ -1029,15 +1030,30 @@ def soa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     dataset_id : dataset identifier
     path : path to save the model
     """
+    # Initialize for measurement of memory usage and elapsed time
+    start = datetime.datetime.now()
+    tracemalloc.start()
+
     # Seperate Optimization Approach - ANN - simple:
-    load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single)
+    load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single) # Initialize the cost structure
+    # Tune the ANN model with Optuna
     model_ANN_simple, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=False, trials=trials)
+    # Make predictions on the test and train set
     target_prediction_ANN = model_ANN_simple.predict(X_test)
     train_prediction_ANN = model_ANN_simple.predict(X_train)
+    # Calculate the orders and profits in a model-based and non-parametric way
     orders_ssp_ann, orders_ssnp_ann = solve_basic_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
     profit_ssp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_ssp_ann))
     profit_ssnp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_ssnp_ann))
-    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit_1=profit_ssp_ANN, profit_2=profit_ssnp_ANN, dataset_id=dataset_id, path=path, name='ANN_simple_SOA')
+
+    # Measure memory usage and elapsed time
+    memory = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    end = datetime.datetime.now()
+    elapsed = (end-start).total_seconds()
+
+    # Save the model, hyperparameters, profit, time and memory usage
+    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit_1=profit_ssp_ANN, profit_2=profit_ssnp_ANN, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='ANN_simple_SOA')
 
 def ioa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                    underage_data_single:np.array, overage_data_single:np.array, trials:int, dataset_id:str, path:str):
@@ -1056,12 +1072,27 @@ def ioa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     dataset_id : dataset identifier
     path : path to save the model
     """
+    # Initialize for measurement of memory usage and elapsed time
+    start = datetime.datetime.now()
+    tracemalloc.start()
+
     # Integrated Optimization Approach - XGBoost - Simple:
-    load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single)
+    load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single) # Initialize the cost structure
+    # Tune the XGBoost model with Optuna
     xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=True, trials=trials)
+    # Make predictions on the test set
     xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
+    # Calculate the profit of the predictions
     profit_simple_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result))
-    save_model(model=xgb_model, hyperparameter=params, profit_1=profit_simple_XGB_IOA, profit_2=None, dataset_id=dataset_id, path=path, name='XGB_simple_IOA')
+
+    # Measure memory usage and elapsed time
+    memory = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    end = datetime.datetime.now()
+    elapsed = (end-start).total_seconds()
+
+    # Save the model, hyperparameters, profit, time and memory usage
+    save_model(model=xgb_model, hyperparameter=params, profit_1=profit_simple_XGB_IOA, profit_2=None, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='XGB_simple_IOA')
 
 def soa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                    underage_data_single:np.array, overage_data_single:np.array, trials:int, dataset_id:str, path:str):
@@ -1080,16 +1111,29 @@ def soa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     dataset_id : dataset identifier
     path : path to save the model
     """
+    # Initialize for measurement of memory usage and elapsed time
+    start = datetime.datetime.now()
+    tracemalloc.start()
+
     # Seperated Optimization Approach - XGBoost - Simple:
-    load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single)
+    load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single) # Initialize the cost structure
     xgb_model, hyperparameter_XGB_SOA_Complex, val_profit = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=False, trials=trials)
+    # Make predictions on the test and train set
     target_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_test))
     train_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_train))  
+    # Calculate the orders and profits in a model-based and non-parametric way
     orders_ssp_XGB, orders_ssnp_XGB = solve_basic_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
     profit_ssp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_ssp_XGB))
     profit_ssnp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_ssnp_XGB))
 
-    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit_1=profit_ssp_XGB, profit_2=profit_ssnp_XGB, dataset_id=dataset_id, path=path, name='XGB_simple_SOA')
+    # Measure memory usage and elapsed time
+    memory = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    end = datetime.datetime.now()
+    elapsed = (end-start).total_seconds()
+
+    # Save the model, hyperparameters, profit, time and memory usage
+    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit_1=profit_ssp_XGB, profit_2=profit_ssnp_XGB, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='XGB_simple_SOA')
 
 def ioa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                     alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
@@ -1109,12 +1153,27 @@ def ioa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     dataset_id : dataset identifier
     path : path to save the model
     """
+    # Initialize for measurement of memory usage and elapsed time
+    start = datetime.datetime.now()
+    tracemalloc.start()
+
     # Integrated Optimization Approach - ANN - complex:
-    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data)
+    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data) # Initialize the cost structure
+    # Tune the ANN model with Optuna
     model_ANN_complex, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=True, trials=trials)
+    # Make predictions on the test set
     target_prediction_ANN = model_ANN_complex.predict(X_test)
+    # Calculate the profit of the predictions
     profit_complex_ANN_IOA = np.mean(nvps_profit(demand=y_test, q=target_prediction_ANN))
-    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit_1=profit_complex_ANN_IOA, profit_2=None, dataset_id=dataset_id, path=path, name='ANN_complex_IOA')
+
+    # Measure memory usage and elapsed time
+    memory = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    end = datetime.datetime.now()
+    elapsed = (end-start).total_seconds()
+
+    # Save the model, hyperparameters, profit, time and memory usage
+    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit_1=profit_complex_ANN_IOA, profit_2=None, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='ANN_complex_IOA')
 
 def soa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                     alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
@@ -1134,15 +1193,30 @@ def soa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     dataset_id : dataset identifier
     path : path to save the model
     """
+    # Initialize for measurement of memory usage and elapsed time
+    start = datetime.datetime.now()
+    tracemalloc.start()
+
     # Seperate Optimization Approach - ANN - complex:
-    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data)
+    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data) # Initialize the cost structure
+    # Tune the ANN model with Optuna
     model_ANN_complex, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=False, trials=trials)
+    # Make predictions on the test and train set
     target_prediction_ANN = model_ANN_complex.predict(X_test)
     train_prediction_ANN = model_ANN_complex.predict(X_train)
+    # Calculate the orders and profits in a model-based and non-parametric way
     orders_scp_ann, orders_scnp_ann = solve_complex_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
     profit_scp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_scp_ann))
     profit_scnp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_scnp_ann))
-    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit_1=profit_scp_ANN, profit_2=profit_scnp_ANN, dataset_id=dataset_id, path=path, name='ANN_complex_SOA')
+
+    # Measure memory usage and elapsed time
+    memory = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    end = datetime.datetime.now()
+    elapsed = (end-start).total_seconds()
+
+    # Save the model, hyperparameters, profit, time and memory usage
+    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit_1=profit_scp_ANN, profit_2=profit_scnp_ANN, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='ANN_complex_SOA')
 
 def ioa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                     alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
@@ -1162,12 +1236,27 @@ def ioa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     dataset_id : dataset identifier
     path : path to save the model
     """
+    # Initialize for measurement of memory usage and elapsed time
+    start = datetime.datetime.now()
+    tracemalloc.start()
+
     # Integrated Optimization Approach - XGBoost - Complex:
-    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data)
+    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data) # Initialize the cost structure
+    # Tune the XGBoost model with Optuna
     xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=True, trials=trials)
+    # Make predictions on the test set
     xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
-    profit_complex_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result))    
-    save_model(model=xgb_model, hyperparameter=params, profit_1=profit_complex_XGB_IOA, profit_2=None, dataset_id=dataset_id, path=path, name='XGB_complex_IOA')
+    # Calculate the profit of the predictions
+    profit_complex_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result))   
+
+    # Measure memory usage and elapsed time
+    memory = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    end = datetime.datetime.now()
+    elapsed = (end-start).total_seconds() 
+
+    # Save the model, hyperparameters, profit, time and memory usage
+    save_model(model=xgb_model, hyperparameter=params, profit_1=profit_complex_XGB_IOA, profit_2=None, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='XGB_complex_IOA')
 
 def soa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                     alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
@@ -1187,15 +1276,30 @@ def soa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     dataset_id : dataset identifier
     path : path to save the model
     """
+    # Initialize for measurement of memory usage and elapsed time
+    start = datetime.datetime.now()
+    tracemalloc.start()
+
     # Seperated Optimization Approach - XGBoost - Complex:
-    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data)
+    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data) # Initialize the cost structure
+    # Tune the XGBoost model with Optuna
     xgb_model, hyperparameter_XGB_SOA_Complex, val_profit = tune_XGB_model(X_train, y_train, X_val, y_val, integrated=False, trials=trials)
+    # Make predictions on the test and train set
     target_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_test))
     train_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_train))
+    # Calculate the orders and profits in a model-based and non-parametric way
     orders_scp_XGB, orders_scnp_XGB = solve_complex_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
     profit_scp_XGB = np.mean(nvps_profit(y_test, orders_scp_XGB))
     profit_scnp_XGB = np.mean(nvps_profit(y_test, orders_scnp_XGB))
-    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit_1=profit_scp_XGB, profit_2=profit_scnp_XGB, dataset_id=dataset_id, path=path, name='XGB_complex_SOA')
+
+    # Measure memory usage and elapsed time
+    memory = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    end = datetime.datetime.now()
+    elapsed = (end-start).total_seconds()
+
+    # Save the model, hyperparameters, profit, time and memory usage
+    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit_1=profit_scp_XGB, profit_2=profit_scnp_XGB, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='XGB_complex_SOA')
 
 def ets_baseline(y_train, y_val, y_test, underage_data, overage_data, alpha_data, fit_past, dataset_id, path):
     """ Train and evaluate the ETS model and saves model, hyperparameters and profit
@@ -1212,14 +1316,28 @@ def ets_baseline(y_train, y_val, y_test, underage_data, overage_data, alpha_data
     dataset_id : dataset identifier
     path : path to save the model
     """
+    # Initialize for measurement of memory usage and elapsed time
+    start = datetime.datetime.now()
+    tracemalloc.start()
+
     # ETS Forecasting:
-    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data)
+    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data) # Initialize the cost structure
+    # Search the best ETS model and forecast the test set
     results_dct, elapse_time = ets_forecast(y_train=y_train, y_val=y_val, y_test_length=y_test.shape[0], fit_past=fit_past)
+    # Evaluate the results of the ETS model
     profit_single_ets, profit_multi_ets = ets_evaluate(y_test=y_test, results_dct=results_dct)
-    save_model(model=results_dct, hyperparameter=None, profit_1=profit_single_ets, profit_2=profit_multi_ets, dataset_id=dataset_id, path=path, name='ETS')
+
+    # Measure memory usage and elapsed time
+    memory = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    end = datetime.datetime.now()
+    elapsed = (end-start).total_seconds()
+
+    # Save the model, hyperparameters, profit, time and memory usage
+    save_model(model=results_dct, hyperparameter=None, profit_1=profit_single_ets, profit_2=profit_multi_ets, elapsed=elapsed,memory=memory, dataset_id=dataset_id, path=path, name='ETS')
 
 
-def save_model(model, hyperparameter, profit_1, profit_2, dataset_id, path, name):
+def save_model(model, hyperparameter, profit_1, profit_2, elapsed, memory, dataset_id, path, name):
     """ Save the model, hyperparameters and profits in a pickle file
 
     Parameters
@@ -1232,17 +1350,26 @@ def save_model(model, hyperparameter, profit_1, profit_2, dataset_id, path, name
     path : path to save the model
     name : name of the model
     """
-    # Create a dictionary 
-    data = {
-        'model': model,
+    # Create dictionaries to save the model and hyperparameters
+    data_model = {
+        'model': model
+    }
+    data_meta = {
         'hyperparameter': hyperparameter,
         'profit_1': profit_1,
-        'profit_2': profit_2
+        'profit_2': profit_2,
+        'elapsed_time': elapsed,
+        'memory': memory
     }
-    file_name = dataset_id +"_"+ name + '.pkl'
-    path_name = str(path) + file_name
-    # Pickle the dictionary into one file
-    with open(path_name, 'wb') as f:
-        pickle.dump(data, f)
+    # Create the file names and paths
+    file_name_meta = dataset_id +"_"+ name + '_meta.pkl'
+    path_name_meta = str(path) + file_name_meta
+    file_name_model = dataset_id +"_"+ name + '_model.pkl'
+    path_name_model = str(path) + file_name_model
+    # Pickle the dictionaries into files
+    with open(path_name_meta, 'wb') as f:
+        pickle.dump(data_meta, f)
+    with open(path_name_model, 'wb') as f:
+        pickle.dump(data_model, f)
     
 

@@ -22,12 +22,16 @@ def load_packages():
     install('statsmodels')
     install('tensorflow')#<2.13
     install('mpi4py')
+    install('psutil')
 
 #load_packages()
 
 # General imports
 import numpy as np
 import xgboost as xgb
+from memory_profiler import profile
+import tracemalloc
+
 
 # custom functions and constants
 from IvsS_Utils import load_data, preprocess_data, split_data, nvps_profit, create_environment, ets_baseline
@@ -63,9 +67,7 @@ alpha_data = np.array([             #alpha data
 ####################################### Functions ##############################################################################
 
 
-
-if __name__ == "__main__":
-    create_environment()
+def main():
     path = "Main/data.csv" 
     trials = 2
     dataset_id = "test_1"
@@ -75,7 +77,7 @@ if __name__ == "__main__":
     single_data = load_data(path=path, multi=False)
     single_feature_data, single_target_data = preprocess_data(raw_data=single_data)
     X_train, y_train, X_val, y_val, X_test, y_test = split_data(feature_data=single_feature_data, target_data=single_target_data)
-
+    
     ioa_ann_simple(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
                    underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
     
@@ -110,3 +112,10 @@ if __name__ == "__main__":
     ets_baseline(y_train=y_train, y_val=y_val, y_test=y_test, underage_data=underage_data, overage_data=overage_data, alpha_data=alpha_data, 
                     fit_past=27*7, dataset_id=dataset_id, path=save_path)
     """
+
+
+if __name__ == "__main__":
+    
+    create_environment()
+    main()
+    
