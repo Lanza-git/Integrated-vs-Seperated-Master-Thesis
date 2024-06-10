@@ -282,8 +282,8 @@ def solve_MILP(d:np.array, n_threads:int=40):
         raise Exception('Optimization was not successful.')
     return orders, model.status
 
-def solve_complex_newsvendor_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=10, n_threads:int=40):
-    """Solve the complex newsvendor problem in a parametric and a non-parametric way.
+def solve_complex_parametric_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=10, n_threads:int=40):
+    """Solve the complex newsvendor problem in a parametric way.
 
     Parameters
     ----------
@@ -300,15 +300,14 @@ def solve_complex_newsvendor_seperate(y_train:np.array, y_train_pred:np.array, y
     ----------
     final_order_quantities_parametric : np.array
         Final order quantities for each week in data_test, parametric approach
-    final_order_quantities_non_parametric : np.array
-        Final order quantities for each week in data_test, non-parametric approach
     """
+
+    # load cost structure and get the number of products
     global alpha, underage, overage
     n_prods = y_train.shape[1] # number of products
 
     # Initialize an empty list to store the final order quantities
     final_order_quantities_parametric = []
-    final_order_quantities_non_parametric = []
 
     forecast_error = y_train - y_train_pred     #  (T,n)
     forecast_error_std = forecast_error.std(axis=0) # (n,)
@@ -318,18 +317,12 @@ def solve_complex_newsvendor_seperate(y_train:np.array, y_train_pred:np.array, y
 
         # Initialize arrays of shape (scenario_size, n)
         demand_scenarios_parametric = np.zeros((scenario_size, n_prods))
-        demand_scenarios_non_parametric = np.zeros((scenario_size, n_prods))
-
         # Fill the arrays
         for i in range(scenario_size):
             demand_scenarios_parametric[i] = row + np.random.normal(loc=0, scale=forecast_error_std)
-            random_row = forecast_error[np.random.randint(forecast_error.shape[0])]
-            demand_scenarios_non_parametric[i] = row + random_row
 
         # Initialize a list to store the solutions for each scenario
-        saa_solutions_p = []
-        saa_solutions_np = []
-        
+        saa_solutions_p = []        
         # For each demand scenario, solve the newsvendor problem
         for demand in demand_scenarios_parametric:
             # Calculate the solution for this scenario
@@ -338,6 +331,55 @@ def solve_complex_newsvendor_seperate(y_train:np.array, y_train_pred:np.array, y
             # Store the solution for this scenario
             saa_solutions_p.append(solution)
 
+        # Average the solutions to get the final allocation
+        final_allocation_p = np.mean(saa_solutions_p, axis=0)
+
+        # Store the final order quantities
+        final_order_quantities_parametric.append(final_allocation_p)
+
+    return final_order_quantities_parametric
+
+
+def solve_complex_non_parametric_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=10, n_threads:int=40):
+    """Solve the complex newsvendor problem in a non-parametric way.
+
+    Parameters
+    ----------
+    y_train : Demand data for training, shape (T, N_PRODUCTS)
+    y_train_pred : Demand predictions for training, shape (T, N_PRODUCTS)
+    y_test_pred : Demand predictions for testing, shape (T, N_PRODUCTS)
+    u : Underage costs, shape (1, N_PRODUCTS)
+    o : Overage costs, shape (1, N_PRODUCTS)
+    alpha : Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
+    scenario_size : Number of scenarios to sample for the approaches
+    n_threads : Number of threads for the optimization
+
+    Returns
+    ----------
+    final_order_quantities_non_parametric : np.array
+        Final order quantities for each week in data_test, non-parametric approach
+    """
+    global alpha, underage, overage
+    n_prods = y_train.shape[1] # number of products
+
+    # Initialize an empty list to store the final order quantities
+    final_order_quantities_non_parametric = []
+
+    # Calculate the forecast error
+    forecast_error = y_train - y_train_pred     #  (T,n)
+
+    # Loop over each week in data_test
+    for row in y_test_pred: # row (n,)
+
+        # Initialize arrays of shape (scenario_size, n)
+        demand_scenarios_non_parametric = np.zeros((scenario_size, n_prods))
+        # Fill the arrays
+        for i in range(scenario_size):
+            random_row = forecast_error[np.random.randint(forecast_error.shape[0])]
+            demand_scenarios_non_parametric[i] = row + random_row
+
+        # Initialize a list to store the solutions for each scenario
+        saa_solutions_np = []
         for demand in demand_scenarios_non_parametric:
             # Calculate the solution for this scenario
             demand = demand.reshape(1,-1)
@@ -346,16 +388,13 @@ def solve_complex_newsvendor_seperate(y_train:np.array, y_train_pred:np.array, y
             saa_solutions_np.append(solution)
 
         # Average the solutions to get the final allocation
-        final_allocation_p = np.mean(saa_solutions_p, axis=0)
         final_allocation_np = np.mean(saa_solutions_np, axis=0)
-
         # Store the final order quantities
-        final_order_quantities_parametric.append(final_allocation_p)
         final_order_quantities_non_parametric.append(final_allocation_np)
 
-    return final_order_quantities_parametric, final_order_quantities_non_parametric
+    return final_order_quantities_non_parametric
 
-def solve_basic_newsvendor_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=10, n_threads:int=40):
+def solve_basic_parametric_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=10, n_threads:int=40):
     """Solve the basic newsvendor problem in a parametric and a non-parametric way.
 
     Parameters
@@ -372,21 +411,20 @@ def solve_basic_newsvendor_seperate(y_train:np.array, y_train_pred:np.array, y_t
     ----------
     final_order_quantities_parametric : np.array
         Final order quantities for each week in data_test, parametric approach
-    final_order_quantities_non_parametric : np.array
-        Final order quantities for each week in data_test, non-parametric approach
     """
     global alpha, underage, overage
     critical_ratio = underage / (underage + overage) # critical ratio
     
      # Initialize an empty list to store the final order quantities
     final_order_quantities_parametric = []
-    final_order_quantities_non_parametric = []
+
     y_train = y_train.reshape(-1,1) 
     y_train_pred = y_train_pred.reshape(-1,1)
+
+    # Calculate the forecast error
     forecast_error = y_train - y_train_pred     #  (T,n)
     forecast_error_std = forecast_error.std(axis=0) # (n,)
   
-    
     # Flatten the forecast_error
     forecast_error_flattened = np.ravel(forecast_error)
 
@@ -395,11 +433,9 @@ def solve_basic_newsvendor_seperate(y_train:np.array, y_train_pred:np.array, y_t
 
         # Create Demand Scenarios for this week
         demand_scenarios_parametric = y_test_pred[i] + np.random.normal(loc=0, scale=forecast_error_std, size=scenario_size)
-        demand_scenarios_non_parametric = y_test_pred[i] + np.random.choice(forecast_error_flattened, size=scenario_size) 
 
         # Initialize a list to store the solutions for each scenario
         saa_solutions_p = []
-        saa_solutions_np = []
 
         # For each demand scenario, solve the newsvendor problem
         for demand in demand_scenarios_parametric:
@@ -408,6 +444,58 @@ def solve_basic_newsvendor_seperate(y_train:np.array, y_train_pred:np.array, y_t
             # Store the solution for this scenario
             saa_solutions_p.append(solution)
 
+        # Average the solutions to get the final allocation
+        final_allocation_p = np.mean(saa_solutions_p, axis=0)
+
+        # Store the final order quantities
+        final_order_quantities_parametric.append(final_allocation_p)
+
+    return final_order_quantities_parametric 
+
+def solve_basic_non_parametric_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=10, n_threads:int=40):
+    """Solve the basic newsvendor problem in a non-parametric way.
+
+    Parameters
+    ----------
+    y_train : Demand data for training, shape (T, N_PRODUCTS)
+    y_train_pred : Demand predictions for training, shape (T, N_PRODUCTS)
+    y_test_pred : Demand predictions for testing, shape (T, N_PRODUCTS)
+    u : Underage costs, shape (1, N_PRODUCTS)
+    o : Overage costs, shape (1, N_PRODUCTS)
+    scenario_size : Number of scenarios to sample for the approaches
+    n_threads : Number of threads for the optimization
+
+    Returns
+    ----------
+    final_order_quantities_non_parametric : np.array
+        Final order quantities for each week in data_test, non-parametric approach
+    """
+    global alpha, underage, overage
+    critical_ratio = underage / (underage + overage) # critical ratio
+    
+     # Initialize an empty list to store the final order quantities
+    final_order_quantities_non_parametric = []
+
+    y_train = y_train.reshape(-1,1) 
+    y_train_pred = y_train_pred.reshape(-1,1)
+
+    # Calculate the forecast error
+    forecast_error = y_train - y_train_pred     #  (T,n)
+    forecast_error_std = forecast_error.std(axis=0) # (n,)
+  
+    # Flatten the forecast_error
+    forecast_error_flattened = np.ravel(forecast_error)
+
+    # Loop over each week in data_test
+    for i in range(len(y_test_pred)):
+
+        # Create Demand Scenarios for this week
+        demand_scenarios_non_parametric = y_test_pred[i] + np.random.choice(forecast_error_flattened, size=scenario_size) 
+
+        # Initialize a list to store the solutions for each scenario
+        saa_solutions_np = []
+
+        # For each demand scenario, solve the newsvendor problem
         for demand in demand_scenarios_non_parametric:
             # Calculate the solution for this scenario
             solution = norm.ppf(critical_ratio,loc=demand,scale=forecast_error_std)
@@ -415,14 +503,12 @@ def solve_basic_newsvendor_seperate(y_train:np.array, y_train_pred:np.array, y_t
             saa_solutions_np.append(solution)
 
         # Average the solutions to get the final allocation
-        final_allocation_p = np.mean(saa_solutions_p, axis=0)
         final_allocation_np = np.mean(saa_solutions_np, axis=0)
 
         # Store the final order quantities
-        final_order_quantities_parametric.append(final_allocation_p)
         final_order_quantities_non_parametric.append(final_allocation_np)
 
-    return final_order_quantities_parametric, final_order_quantities_non_parametric
+    return final_order_quantities_non_parametric
 
 ############################### ETS Functions ###########################################################################
         
@@ -1009,7 +1095,7 @@ def ioa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     elapsed = (end-start).total_seconds()
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit_1=profit_simple_ANN_IOA, profit_2=None, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='ANN_simple_IOA')
+    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit=profit_simple_ANN_IOA, elapsed=elapsed, memory=memory[1], dataset_id=dataset_id, path=path, name='ANN_simple_IOA')
 
 
 
@@ -1041,19 +1127,32 @@ def soa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     # Make predictions on the test and train set
     target_prediction_ANN = model_ANN_simple.predict(X_test)
     train_prediction_ANN = model_ANN_simple.predict(X_train)
-    # Calculate the orders and profits in a model-based and non-parametric way
-    orders_ssp_ann, orders_ssnp_ann = solve_basic_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
+
+    checkpoint_1 = datetime.datetime.now()
+    memory_1 = tracemalloc.get_traced_memory()
+    tracemalloc.reset_peak()
+    # Calculate the orders and profits in a parametric way
+    orders_ssp_ann = solve_basic_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
     profit_ssp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_ssp_ann))
+    checkpoint_2 = datetime.datetime.now()
+    memory_2 = tracemalloc.get_traced_memory()
+    tracemalloc.reset_peak()
+    # Calculate the orders and profits in a non-parametric way
+    orders_ssnp_ann = solve_basic_non_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
     profit_ssnp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_ssnp_ann))
 
     # Measure memory usage and elapsed time
-    memory = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    memory_3 = tracemalloc.get_traced_memory()
     end = datetime.datetime.now()
-    elapsed = (end-start).total_seconds()
+    tracemalloc.stop()
+    memory_ssp = np.maximum(memory_2[1],memory_1[1])
+    memory_ssnp = np.maximum(memory_3[1],memory_1[1])
+    elapsed_ssp = (checkpoint_2-start).total_seconds()
+    elapsed_ssnp = ((checkpoint_1-start)+(end-checkpoint_2)).total_seconds()
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit_1=profit_ssp_ANN, profit_2=profit_ssnp_ANN, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='ANN_simple_SOA')
+    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit=profit_ssp_ANN, elapsed=elapsed_ssp, memory=memory_ssp, dataset_id=dataset_id, path=path, name='ANN_simple_SOAp')
+    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit=profit_ssnp_ANN, elapsed=elapsed_ssnp, memory=memory_ssnp, dataset_id=dataset_id, path=path, name='ANN_simple_SOAnp')
 
 def ioa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                    underage_data_single:np.array, overage_data_single:np.array, trials:int, dataset_id:str, path:str):
@@ -1090,9 +1189,9 @@ def ioa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     tracemalloc.stop()
     end = datetime.datetime.now()
     elapsed = (end-start).total_seconds()
-
+ 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=xgb_model, hyperparameter=params, profit_1=profit_simple_XGB_IOA, profit_2=None, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='XGB_simple_IOA')
+    save_model(model=xgb_model, hyperparameter=params, profit=profit_simple_XGB_IOA, elapsed=elapsed, memory=memory[1], dataset_id=dataset_id, path=path, name='XGB_simple_IOA')
 
 def soa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                    underage_data_single:np.array, overage_data_single:np.array, trials:int, dataset_id:str, path:str):
@@ -1121,19 +1220,33 @@ def soa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     # Make predictions on the test and train set
     target_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_test))
     train_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_train))  
-    # Calculate the orders and profits in a model-based and non-parametric way
-    orders_ssp_XGB, orders_ssnp_XGB = solve_basic_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
-    profit_ssp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_ssp_XGB))
-    profit_ssnp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_ssnp_XGB))
+
+
+    checkpoint_1 = datetime.datetime.now()
+    memory_1 = tracemalloc.get_traced_memory()
+    tracemalloc.reset_peak()
+    # Calculate the orders and profits in a parametric way
+    orders_ssp_xgb = solve_basic_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
+    profit_ssp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_ssp_xgb))
+    checkpoint_2 = datetime.datetime.now()
+    memory_2 = tracemalloc.get_traced_memory()
+    tracemalloc.reset_peak()
+    # Calculate the orders and profits in a non-parametric way
+    orders_ssnp_xgb = solve_basic_non_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
+    profit_ssnp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_ssnp_xgb))
 
     # Measure memory usage and elapsed time
-    memory = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    memory_3 = tracemalloc.get_traced_memory()
     end = datetime.datetime.now()
-    elapsed = (end-start).total_seconds()
+    tracemalloc.stop()
+    memory_ssp = np.maximum(memory_2[1],memory_1[1])
+    memory_ssnp = np.maximum(memory_3[1],memory_1[1])
+    elapsed_ssp = (checkpoint_2-start).total_seconds()
+    elapsed_ssnp = ((checkpoint_1-start)+(end-checkpoint_2)).total_seconds()
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit_1=profit_ssp_XGB, profit_2=profit_ssnp_XGB, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='XGB_simple_SOA')
+    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit=profit_ssp_XGB, elapsed=elapsed_ssp, memory=memory_ssp, dataset_id=dataset_id, path=path, name='XGB_simple_SOAp')
+    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit=profit_ssnp_XGB, elapsed=elapsed_ssnp, memory=memory_ssnp, dataset_id=dataset_id, path=path, name='XGB_simple_SOAnp')
 
 def ioa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                     alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
@@ -1173,7 +1286,7 @@ def ioa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     elapsed = (end-start).total_seconds()
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit_1=profit_complex_ANN_IOA, profit_2=None, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='ANN_complex_IOA')
+    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit=profit_complex_ANN_IOA, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='ANN_complex_IOA')
 
 def soa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                     alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
@@ -1204,19 +1317,32 @@ def soa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     # Make predictions on the test and train set
     target_prediction_ANN = model_ANN_complex.predict(X_test)
     train_prediction_ANN = model_ANN_complex.predict(X_train)
-    # Calculate the orders and profits in a model-based and non-parametric way
-    orders_scp_ann, orders_scnp_ann = solve_complex_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
+
+    checkpoint_1 = datetime.datetime.now()
+    memory_1 = tracemalloc.get_traced_memory()
+    tracemalloc.reset_peak()
+    # Calculate the orders and profits in a parametric way
+    orders_scp_ann = solve_complex_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
     profit_scp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_scp_ann))
+    checkpoint_2 = datetime.datetime.now()
+    memory_2 = tracemalloc.get_traced_memory()
+    tracemalloc.reset_peak()
+    # Calculate the orders and profits in a non-parametric way
+    orders_scnp_ann = solve_complex_non_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
     profit_scnp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_scnp_ann))
 
     # Measure memory usage and elapsed time
-    memory = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    memory_3 = tracemalloc.get_traced_memory()
     end = datetime.datetime.now()
-    elapsed = (end-start).total_seconds()
+    tracemalloc.stop()
+    memory_scp = np.maximum(memory_2[1],memory_1[1])
+    memory_scnp = np.maximum(memory_3[1],memory_1[1])
+    elapsed_scp = (checkpoint_2-start).total_seconds()
+    elapsed_scnp = ((checkpoint_1-start)+(end-checkpoint_2)).total_seconds()
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit_1=profit_scp_ANN, profit_2=profit_scnp_ANN, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='ANN_complex_SOA')
+    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit=profit_scp_ANN, elapsed=elapsed_scp, memory=memory_scp, dataset_id=dataset_id, path=path, name='ANN_complex_SOAp')
+    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit=profit_scnp_ANN, elapsed=elapsed_scnp, memory=memory_scnp, dataset_id=dataset_id, path=path, name='ANN_complex_SOAnp')
 
 def ioa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                     alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
@@ -1256,7 +1382,7 @@ def ioa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     elapsed = (end-start).total_seconds() 
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=xgb_model, hyperparameter=params, profit_1=profit_complex_XGB_IOA, profit_2=None, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='XGB_complex_IOA')
+    save_model(model=xgb_model, hyperparameter=params, profit=profit_complex_XGB_IOA, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='XGB_complex_IOA')
 
 def soa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                     alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
@@ -1287,19 +1413,32 @@ def soa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     # Make predictions on the test and train set
     target_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_test))
     train_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_train))
-    # Calculate the orders and profits in a model-based and non-parametric way
-    orders_scp_XGB, orders_scnp_XGB = solve_complex_newsvendor_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
-    profit_scp_XGB = np.mean(nvps_profit(y_test, orders_scp_XGB))
-    profit_scnp_XGB = np.mean(nvps_profit(y_test, orders_scnp_XGB))
+
+    checkpoint_1 = datetime.datetime.now()
+    memory_1 = tracemalloc.get_traced_memory()
+    tracemalloc.reset_peak()
+    # Calculate the orders and profits in a parametric way
+    orders_scp_xgb = solve_complex_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
+    profit_scp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_scp_xgb))
+    checkpoint_2 = datetime.datetime.now()
+    memory_2 = tracemalloc.get_traced_memory()
+    tracemalloc.reset_peak()
+    # Calculate the orders and profits in a non-parametric way
+    orders_scnp_xgb = solve_complex_non_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
+    profit_scnp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_scnp_xgb))
 
     # Measure memory usage and elapsed time
-    memory = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
+    memory_3 = tracemalloc.get_traced_memory()
     end = datetime.datetime.now()
-    elapsed = (end-start).total_seconds()
+    tracemalloc.stop()
+    memory_scp = np.maximum(memory_2[1],memory_1[1])
+    memory_scnp = np.maximum(memory_3[1],memory_1[1])
+    elapsed_scp = (checkpoint_2-start).total_seconds()
+    elapsed_scnp = ((checkpoint_1-start)+(end-checkpoint_2)).total_seconds()
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit_1=profit_scp_XGB, profit_2=profit_scnp_XGB, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='XGB_complex_SOA')
+    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit_1=profit_scp_XGB, elapsed=elapsed_scp, memory=memory_scp, dataset_id=dataset_id, path=path, name='XGB_complex_SOAp')
+    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit_2=profit_scnp_XGB, elapsed=elapsed_scnp, memory=memory_scnp, dataset_id=dataset_id, path=path, name='XGB_complex_SOAnp')
 
 def ets_baseline(y_train, y_val, y_test, underage_data, overage_data, alpha_data, fit_past, dataset_id, path):
     """ Train and evaluate the ETS model and saves model, hyperparameters and profit
@@ -1334,10 +1473,11 @@ def ets_baseline(y_train, y_val, y_test, underage_data, overage_data, alpha_data
     elapsed = (end-start).total_seconds()
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=results_dct, hyperparameter=None, profit_1=profit_single_ets, profit_2=profit_multi_ets, elapsed=elapsed,memory=memory, dataset_id=dataset_id, path=path, name='ETS')
+    save_model(model=results_dct, hyperparameter=None, profit=profit_single_ets, elapsed=elapsed,memory=memory, dataset_id=dataset_id, path=path, name='ETS_sinlge')
+    save_model(model=results_dct, hyperparameter=None, profit=profit_multi_ets, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='ETS_multi')
 
 
-def save_model(model, hyperparameter, profit_1, profit_2, elapsed, memory, dataset_id, path, name):
+def save_model(model, hyperparameter, profit, elapsed, memory, dataset_id, path, name):
     """ Save the model, hyperparameters and profits in a pickle file
 
     Parameters
@@ -1356,8 +1496,7 @@ def save_model(model, hyperparameter, profit_1, profit_2, elapsed, memory, datas
     }
     data_meta = {
         'hyperparameter': hyperparameter,
-        'profit_1': profit_1,
-        'profit_2': profit_2,
+        'profit': profit,
         'elapsed_time': elapsed,
         'memory': memory
     }
