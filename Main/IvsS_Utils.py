@@ -4,9 +4,10 @@ import pickle
 import datetime
 import logging
 import itertools
-import tracemalloc
 from typing import Tuple
 import math
+import threading
+import time
 
 # Third-party imports
 import numpy as np
@@ -18,6 +19,7 @@ from optuna_integration.keras import KerasPruningCallback
 import gurobipy as gp
 from gurobipy import GRB
 import xgboost as xgb
+import psutil
 
 # scikit-learn imports
 from sklearn.compose import ColumnTransformer
@@ -886,7 +888,12 @@ def tune_NN_model_optuna(X_train:np.array, y_train:np.array, X_val:np.array, y_v
 
         return result
     study = optuna.create_study(direction='maximize')
-    study.optimize(objective, n_trials=trials, n_jobs=threads)
+    try:
+        study.optimize(objective, n_trials=trials, n_jobs=threads, callbacks=[early_stopping_opt])
+    except EarlyStoppingExceeded:
+        print(f'EarlyStopping Exceeded: No new best scores on iters {OPTUNA_EARLY_STOPING}')
+
+
     # Get the best parameters and best estimator
     best_params = study.best_params
     hyperparameter = [best_params['n_hidden'], best_params['n_neurons'],best_params['learning_rate'], 
@@ -912,6 +919,10 @@ def train_NN_model(hp:list, X_train:np.array, y_train:np.array, X_val:np.array, 
     model : keras model
         Final model
     """
+    # set seed for reproducability
+    tf.random.set_seed(42)
+    np.random.seed(42)
+
     global alpha, underage, overage
     # define dimensions
     output_shape = y_train.shape[1] #N_PRODUCTS
@@ -1162,8 +1173,9 @@ def ioa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     path : path to save the model
     """
     # Initialize for measurement of memory usage and elapsed time
+    monitor = MemoryMonitor(interval=1)  # monitor every second
+    monitor.start()
     start = datetime.datetime.now()
-    tracemalloc.start()
 
     # Integrated Optimization Approach - ANN - simple:
     load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single) # Initialize the cost structure
@@ -1175,13 +1187,14 @@ def ioa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     profit_simple_ANN_IOA = np.mean(nvps_profit(demand=y_test, q=target_prediction_ANN))
 
     # Measure memory usage and elapsed time
-    memory = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-    end = datetime.datetime.now()
+    monitor.stop() # stop the average memory monitor
+    avg_memory = monitor.average_memory_usage() # read the average memory monitor
+    peak_memory = monitor.peak_memory_usage() # read the peak memory monitor
+    end = datetime.datetime.now() # stop the time monitor
     elapsed = (end-start).total_seconds()
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit=profit_simple_ANN_IOA, elapsed=elapsed, memory=memory[1], dataset_id=dataset_id, path=path, name='ANN_simple_IOA')
+    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit=profit_simple_ANN_IOA, elapsed=elapsed, peak_memory=peak_memory, avg_memory=avg_memory, dataset_id=dataset_id, path=path, name='ANN_simple_IOA')
 
 
 
@@ -1203,8 +1216,11 @@ def soa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     path : path to save the model
     """
     # Initialize for measurement of memory usage and elapsed time
-    start = datetime.datetime.now()
-    tracemalloc.start()
+    monitor_1 = MemoryMonitor(interval=1)  # monitor every second
+    monitor_2 = MemoryMonitor(interval=1)  # monitor every second
+    monitor_3 = MemoryMonitor(interval=1)  # monitor every second
+    monitor_1.start() # start average memory monitor for estimation
+    start = datetime.datetime.now() # start the time monitor for estimation
 
     # Seperate Optimization Approach - ANN - simple:
     load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single) # Initialize the cost structure
@@ -1214,31 +1230,39 @@ def soa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     target_prediction_ANN = model_ANN_simple.predict(X_test)
     train_prediction_ANN = model_ANN_simple.predict(X_train)
 
-    checkpoint_1 = datetime.datetime.now()
-    memory_1 = tracemalloc.get_traced_memory()
-    tracemalloc.reset_peak()
+    # Measure memory usage and elapsed time for estimation
+    monitor_1.stop() # stop the average memory monitor for estimation
+    checkpoint_1 = datetime.datetime.now() # checkpoint for the time monitor
+    monitor_2.start() # start the average memory monitor for the parametric optimization
+
     # Calculate the orders and profits in a parametric way
     orders_ssp_ann = solve_basic_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
     profit_ssp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_ssp_ann))
-    checkpoint_2 = datetime.datetime.now()
-    memory_2 = tracemalloc.get_traced_memory()
-    tracemalloc.reset_peak()
+
+    # Measure memory usage and elapsed time for parametric optimization
+    monitor_2.stop() # stop the average memory monitor for the parametric optimization
+    checkpoint_2 = datetime.datetime.now() # checkpoint for the time monitor
+    monitor_3.start() # start the average memory monitor for the non-parametric optimization 
+
     # Calculate the orders and profits in a non-parametric way
     orders_ssnp_ann = solve_basic_non_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
     profit_ssnp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_ssnp_ann))
 
-    # Measure memory usage and elapsed time
-    memory_3 = tracemalloc.get_traced_memory()
-    end = datetime.datetime.now()
-    tracemalloc.stop()
-    memory_ssp = np.maximum(memory_2[1],memory_1[1])
-    memory_ssnp = np.maximum(memory_3[1],memory_1[1])
+    # Measure memory usage and elapsed time for non-parametric optimization
+    monitor_3.stop() # stop the average memory monitor for the non-parametric optimization
+    end = datetime.datetime.now() # stop the time monitor 
+
+    # Calculate the parametric and non-parametric metadata
+    peak_memory_ssp = np.maximum(monitor_2.peak_memory_usage(), monitor_1.peak_memory_usage())
+    peak_memory_ssnp = np.maximum(monitor_3.peak_memory_usage(), monitor_1.peak_memory_usage())
     elapsed_ssp = (checkpoint_2-start).total_seconds()
     elapsed_ssnp = ((checkpoint_1-start)+(end-checkpoint_2)).total_seconds()
+    avg_memory_ssp = np.maximum(monitor_1.average_memory_usage(), monitor_2.average_memory_usage())
+    avg_memory_ssnp = np.maximum(monitor_1.average_memory_usage(), monitor_3.average_memory_usage())
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit=profit_ssp_ANN, elapsed=elapsed_ssp, memory=memory_ssp, dataset_id=dataset_id, path=path, name='ANN_simple_SOAp')
-    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit=profit_ssnp_ANN, elapsed=elapsed_ssnp, memory=memory_ssnp, dataset_id=dataset_id, path=path, name='ANN_simple_SOAnp')
+    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit=profit_ssp_ANN, elapsed=elapsed_ssp, peak_memory=peak_memory_ssp, avg_memory=avg_memory_ssp, dataset_id=dataset_id, path=path, name='ANN_simple_SOAp')
+    save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit=profit_ssnp_ANN, elapsed=elapsed_ssnp, peak_memory=peak_memory_ssnp, avg_memory=avg_memory_ssnp, dataset_id=dataset_id, path=path, name='ANN_simple_SOAnp')
 
 def ioa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                    underage_data_single:np.array, overage_data_single:np.array, trials:int, dataset_id:str, path:str):
@@ -1258,8 +1282,9 @@ def ioa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     path : path to save the model
     """
     # Initialize for measurement of memory usage and elapsed time
+    monitor = MemoryMonitor(interval=1)  # monitor every second
+    monitor.start()
     start = datetime.datetime.now()
-    tracemalloc.start()
 
     # Integrated Optimization Approach - XGBoost - Simple:
     load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single) # Initialize the cost structure
@@ -1271,13 +1296,14 @@ def ioa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     profit_simple_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result))
 
     # Measure memory usage and elapsed time
-    memory = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-    end = datetime.datetime.now()
+    monitor.stop() # stop the average memory monitor
+    avg_memory = monitor.average_memory_usage() # read the average memory monitor
+    peak_memory = monitor.peak_memory_usage() # read the peak memory monitor
+    end = datetime.datetime.now() # stop the time monitor
     elapsed = (end-start).total_seconds()
  
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=xgb_model, hyperparameter=params, profit=profit_simple_XGB_IOA, elapsed=elapsed, memory=memory[1], dataset_id=dataset_id, path=path, name='XGB_simple_IOA')
+    save_model(model=xgb_model, hyperparameter=params, profit=profit_simple_XGB_IOA, elapsed=elapsed, peak_memory=peak_memory, avg_memory=avg_memory, dataset_id=dataset_id, path=path, name='XGB_simple_IOA')
 
 def soa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                    underage_data_single:np.array, overage_data_single:np.array, trials:int, dataset_id:str, path:str):
@@ -1297,8 +1323,11 @@ def soa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     path : path to save the model
     """
     # Initialize for measurement of memory usage and elapsed time
-    start = datetime.datetime.now()
-    tracemalloc.start()
+    monitor_1 = MemoryMonitor(interval=1)  # monitor every second
+    monitor_2 = MemoryMonitor(interval=1)  # monitor every second
+    monitor_3 = MemoryMonitor(interval=1)  # monitor every second
+    monitor_1.start() # start average memory monitor for estimation
+    start = datetime.datetime.now() # start the time monitor for estimation
 
     # Seperated Optimization Approach - XGBoost - Simple:
     load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single) # Initialize the cost structure
@@ -1307,32 +1336,39 @@ def soa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     target_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_test))
     train_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_train))  
 
+    # Measure memory usage and elapsed time for estimation
+    monitor_1.stop() # stop the average memory monitor for estimation
+    checkpoint_1 = datetime.datetime.now() # checkpoint for the time monitor
+    monitor_2.start() # start the average memory monitor for the parametric optimization
 
-    checkpoint_1 = datetime.datetime.now()
-    memory_1 = tracemalloc.get_traced_memory()
-    tracemalloc.reset_peak()
     # Calculate the orders and profits in a parametric way
     orders_ssp_xgb = solve_basic_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
     profit_ssp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_ssp_xgb))
-    checkpoint_2 = datetime.datetime.now()
-    memory_2 = tracemalloc.get_traced_memory()
-    tracemalloc.reset_peak()
+
+    # Measure memory usage and elapsed time for parametric optimization
+    monitor_2.stop() # stop the average memory monitor for the parametric optimization
+    checkpoint_2 = datetime.datetime.now() # checkpoint for the time monitor
+    monitor_3.start() # start the average memory monitor for the non-parametric optimization 
+
     # Calculate the orders and profits in a non-parametric way
     orders_ssnp_xgb = solve_basic_non_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
     profit_ssnp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_ssnp_xgb))
 
-    # Measure memory usage and elapsed time
-    memory_3 = tracemalloc.get_traced_memory()
-    end = datetime.datetime.now()
-    tracemalloc.stop()
-    memory_ssp = np.maximum(memory_2[1],memory_1[1])
-    memory_ssnp = np.maximum(memory_3[1],memory_1[1])
+    # Measure memory usage and elapsed time for non-parametric optimization
+    monitor_3.stop() # stop the average memory monitor for the non-parametric optimization
+    end = datetime.datetime.now() # stop the time monitor 
+
+    # Calculate the parametric and non-parametric metadata
+    peak_memory_ssp = np.maximum(monitor_2.peak_memory_usage(), monitor_1.peak_memory_usage())
+    peak_memory_ssnp = np.maximum(monitor_3.peak_memory_usage(), monitor_1.peak_memory_usage())
     elapsed_ssp = (checkpoint_2-start).total_seconds()
     elapsed_ssnp = ((checkpoint_1-start)+(end-checkpoint_2)).total_seconds()
+    avg_memory_ssp = np.maximum(monitor_1.average_memory_usage(), monitor_2.average_memory_usage())
+    avg_memory_ssnp = np.maximum(monitor_1.average_memory_usage(), monitor_3.average_memory_usage())
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit=profit_ssp_XGB, elapsed=elapsed_ssp, memory=memory_ssp, dataset_id=dataset_id, path=path, name='XGB_simple_SOAp')
-    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit=profit_ssnp_XGB, elapsed=elapsed_ssnp, memory=memory_ssnp, dataset_id=dataset_id, path=path, name='XGB_simple_SOAnp')
+    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit=profit_ssp_XGB, elapsed=elapsed_ssp, peak_memory=peak_memory_ssp, avg_memory=avg_memory_ssp, dataset_id=dataset_id, path=path, name='XGB_simple_SOAp')
+    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit=profit_ssnp_XGB, elapsed=elapsed_ssnp, peak_memory=peak_memory_ssnp, avg_memory=avg_memory_ssnp, dataset_id=dataset_id, path=path, name='XGB_simple_SOAnp')
 
 def ioa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                     alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
@@ -1353,8 +1389,9 @@ def ioa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     path : path to save the model
     """
     # Initialize for measurement of memory usage and elapsed time
+    monitor = MemoryMonitor(interval=1)  # monitor every second
+    monitor.start()
     start = datetime.datetime.now()
-    tracemalloc.start()
 
     # Integrated Optimization Approach - ANN - complex:
     load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data) # Initialize the cost structure
@@ -1366,13 +1403,14 @@ def ioa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     profit_complex_ANN_IOA = np.mean(nvps_profit(demand=y_test, q=target_prediction_ANN))
 
     # Measure memory usage and elapsed time
-    memory = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-    end = datetime.datetime.now()
+    monitor.stop() # stop the average memory monitor
+    avg_memory = monitor.average_memory_usage() # read the average memory monitor
+    peak_memory = monitor.peak_memory_usage() # read the peak memory monitor
+    end = datetime.datetime.now() # stop the time monitor
     elapsed = (end-start).total_seconds()
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit=profit_complex_ANN_IOA, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='ANN_complex_IOA')
+    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit=profit_complex_ANN_IOA, elapsed=elapsed, peak_memory=peak_memory, avg_memory=avg_memory, dataset_id=dataset_id, path=path, name='ANN_complex_IOA')
 
 def soa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                     alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
@@ -1393,8 +1431,11 @@ def soa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     path : path to save the model
     """
     # Initialize for measurement of memory usage and elapsed time
-    start = datetime.datetime.now()
-    tracemalloc.start()
+    monitor_1 = MemoryMonitor(interval=1)  # monitor every second
+    monitor_2 = MemoryMonitor(interval=1)  # monitor every second
+    monitor_3 = MemoryMonitor(interval=1)  # monitor every second
+    monitor_1.start() # start average memory monitor for estimation
+    start = datetime.datetime.now() # start the time monitor for estimation
 
     # Seperate Optimization Approach - ANN - complex:
     load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data) # Initialize the cost structure
@@ -1404,31 +1445,39 @@ def soa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     target_prediction_ANN = model_ANN_complex.predict(X_test)
     train_prediction_ANN = model_ANN_complex.predict(X_train)
 
-    checkpoint_1 = datetime.datetime.now()
-    memory_1 = tracemalloc.get_traced_memory()
-    tracemalloc.reset_peak()
+    # Measure memory usage and elapsed time for estimation
+    monitor_1.stop() # stop the average memory monitor for estimation
+    checkpoint_1 = datetime.datetime.now() # checkpoint for the time monitor
+    monitor_2.start() # start the average memory monitor for the parametric optimization
+
     # Calculate the orders and profits in a parametric way
     orders_scp_ann = solve_complex_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
     profit_scp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_scp_ann))
-    checkpoint_2 = datetime.datetime.now()
-    memory_2 = tracemalloc.get_traced_memory()
-    tracemalloc.reset_peak()
+
+    # Measure memory usage and elapsed time for parametric optimization
+    monitor_2.stop() # stop the average memory monitor for the parametric optimization
+    checkpoint_2 = datetime.datetime.now() # checkpoint for the time monitor
+    monitor_3.start() # start the average memory monitor for the non-parametric optimization 
+
     # Calculate the orders and profits in a non-parametric way
     orders_scnp_ann = solve_complex_non_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
     profit_scnp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_scnp_ann))
 
-    # Measure memory usage and elapsed time
-    memory_3 = tracemalloc.get_traced_memory()
-    end = datetime.datetime.now()
-    tracemalloc.stop()
-    memory_scp = np.maximum(memory_2[1],memory_1[1])
-    memory_scnp = np.maximum(memory_3[1],memory_1[1])
+    # Measure memory usage and elapsed time for non-parametric optimization
+    monitor_3.stop() # stop the average memory monitor for the non-parametric optimization
+    end = datetime.datetime.now() # stop the time monitor 
+
+    # Calculate the parametric and non-parametric metadata
+    peak_memory_scp = np.maximum(monitor_2.peak_memory_usage(), monitor_1.peak_memory_usage())
+    peak_memory_scnp = np.maximum(monitor_3.peak_memory_usage(), monitor_1.peak_memory_usage())
     elapsed_scp = (checkpoint_2-start).total_seconds()
     elapsed_scnp = ((checkpoint_1-start)+(end-checkpoint_2)).total_seconds()
+    avg_memory_scp = np.maximum(monitor_1.average_memory_usage(), monitor_2.average_memory_usage())
+    avg_memory_scnp = np.maximum(monitor_1.average_memory_usage(), monitor_3.average_memory_usage())
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit=profit_scp_ANN, elapsed=elapsed_scp, memory=memory_scp, dataset_id=dataset_id, path=path, name='ANN_complex_SOAp')
-    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit=profit_scnp_ANN, elapsed=elapsed_scnp, memory=memory_scnp, dataset_id=dataset_id, path=path, name='ANN_complex_SOAnp')
+    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit=profit_scp_ANN, elapsed=elapsed_scp, peak_memory=peak_memory_scp, avg_memory=avg_memory_scp, dataset_id=dataset_id, path=path, name='ANN_complex_SOAp')
+    save_model(model=model_ANN_complex, hyperparameter=hyperparameter, profit=profit_scnp_ANN, elapsed=elapsed_scnp, peak_memory=peak_memory_scnp, avg_memory=avg_memory_scnp, dataset_id=dataset_id, path=path, name='ANN_complex_SOAnp')
 
 def ioa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                     alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
@@ -1449,8 +1498,9 @@ def ioa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     path : path to save the model
     """
     # Initialize for measurement of memory usage and elapsed time
+    monitor = MemoryMonitor(interval=1)  # monitor every second
+    monitor.start()
     start = datetime.datetime.now()
-    tracemalloc.start()
 
     # Integrated Optimization Approach - XGBoost - Complex:
     load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data) # Initialize the cost structure
@@ -1462,13 +1512,14 @@ def ioa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     profit_complex_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result))   
 
     # Measure memory usage and elapsed time
-    memory = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-    end = datetime.datetime.now()
-    elapsed = (end-start).total_seconds() 
+    monitor.stop() # stop the average memory monitor
+    avg_memory = monitor.average_memory_usage() # read the average memory monitor
+    peak_memory = monitor.peak_memory_usage() # read the peak memory monitor
+    end = datetime.datetime.now() # stop the time monitor
+    elapsed = (end-start).total_seconds()
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=xgb_model, hyperparameter=params, profit=profit_complex_XGB_IOA, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='XGB_complex_IOA')
+    save_model(model=xgb_model, hyperparameter=params, profit=profit_complex_XGB_IOA, elapsed=elapsed, peak_memory=peak_memory, avg_memory=avg_memory, dataset_id=dataset_id, path=path, name='XGB_complex_IOA')
 
 def soa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                     alpha_data:np.array, underage_data:np.array, overage_data:np.array, trials:int, dataset_id:str, path:str):
@@ -1489,8 +1540,11 @@ def soa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     path : path to save the model
     """
     # Initialize for measurement of memory usage and elapsed time
-    start = datetime.datetime.now()
-    tracemalloc.start()
+    monitor_1 = MemoryMonitor(interval=1)  # monitor every second
+    monitor_2 = MemoryMonitor(interval=1)  # monitor every second
+    monitor_3 = MemoryMonitor(interval=1)  # monitor every second
+    monitor_1.start() # start average memory monitor for estimation
+    start = datetime.datetime.now() # start the time monitor for estimation
 
     # Seperated Optimization Approach - XGBoost - Complex:
     load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data) # Initialize the cost structure
@@ -1500,31 +1554,39 @@ def soa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     target_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_test))
     train_prediction_XGB = xgb_model.predict(xgb.DMatrix(X_train))
 
-    checkpoint_1 = datetime.datetime.now()
-    memory_1 = tracemalloc.get_traced_memory()
-    tracemalloc.reset_peak()
+    # Measure memory usage and elapsed time for estimation
+    monitor_1.stop() # stop the average memory monitor for estimation
+    checkpoint_1 = datetime.datetime.now() # checkpoint for the time monitor
+    monitor_2.start() # start the average memory monitor for the parametric optimization
+
     # Calculate the orders and profits in a parametric way
     orders_scp_xgb = solve_complex_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
     profit_scp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_scp_xgb))
-    checkpoint_2 = datetime.datetime.now()
-    memory_2 = tracemalloc.get_traced_memory()
-    tracemalloc.reset_peak()
+
+    # Measure memory usage and elapsed time for parametric optimization
+    monitor_2.stop() # stop the average memory monitor for the parametric optimization
+    checkpoint_2 = datetime.datetime.now() # checkpoint for the time monitor
+    monitor_3.start() # start the average memory monitor for the non-parametric optimization 
+
     # Calculate the orders and profits in a non-parametric way
     orders_scnp_xgb = solve_complex_non_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
     profit_scnp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_scnp_xgb))
 
-    # Measure memory usage and elapsed time
-    memory_3 = tracemalloc.get_traced_memory()
-    end = datetime.datetime.now()
-    tracemalloc.stop()
-    memory_scp = np.maximum(memory_2[1],memory_1[1])
-    memory_scnp = np.maximum(memory_3[1],memory_1[1])
+    # Measure memory usage and elapsed time for non-parametric optimization
+    monitor_3.stop() # stop the average memory monitor for the non-parametric optimization
+    end = datetime.datetime.now() # stop the time monitor 
+
+    # Calculate the parametric and non-parametric metadata
+    peak_memory_scp = np.maximum(monitor_2.peak_memory_usage(), monitor_1.peak_memory_usage())
+    peak_memory_scnp = np.maximum(monitor_3.peak_memory_usage(), monitor_1.peak_memory_usage())
     elapsed_scp = (checkpoint_2-start).total_seconds()
     elapsed_scnp = ((checkpoint_1-start)+(end-checkpoint_2)).total_seconds()
+    avg_memory_scp = np.maximum(monitor_1.average_memory_usage(), monitor_2.average_memory_usage())
+    avg_memory_scnp = np.maximum(monitor_1.average_memory_usage(), monitor_3.average_memory_usage())
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit_1=profit_scp_XGB, elapsed=elapsed_scp, memory=memory_scp, dataset_id=dataset_id, path=path, name='XGB_complex_SOAp')
-    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit_2=profit_scnp_XGB, elapsed=elapsed_scnp, memory=memory_scnp, dataset_id=dataset_id, path=path, name='XGB_complex_SOAnp')
+    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit=profit_scp_XGB, elapsed=elapsed_scp, peak_memory=peak_memory_scp, avg_memory=avg_memory_scp, dataset_id=dataset_id, path=path, name='XGB_complex_SOAp')
+    save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit=profit_scnp_XGB, elapsed=elapsed_scnp, peak_memory=peak_memory_scnp, avg_memory=avg_memory_scnp, dataset_id=dataset_id, path=path, name='XGB_complex_SOAnp')
 
 def ets_baseline(y_train, y_val, y_test, underage_data, overage_data, alpha_data, fit_past, dataset_id, path):
     """ Train and evaluate the ETS model and saves model, hyperparameters and profit
@@ -1542,6 +1604,8 @@ def ets_baseline(y_train, y_val, y_test, underage_data, overage_data, alpha_data
     path : path to save the model
     """
     # Initialize for measurement of memory usage and elapsed time
+    monitor = MemoryMonitor(interval=1)  # monitor every second
+    monitor.start()
     start = datetime.datetime.now()
     tracemalloc.start()
 
@@ -1553,17 +1617,19 @@ def ets_baseline(y_train, y_val, y_test, underage_data, overage_data, alpha_data
     profit_single_ets, profit_multi_ets = ets_evaluate(y_test=y_test, results_dct=results_dct)
 
     # Measure memory usage and elapsed time
-    memory = tracemalloc.get_traced_memory()
+    monitor.stop() # stop the average memory monitor
+    peak_memory = tracemalloc.get_traced_memory() # stop the peak memory monitor
+    end = datetime.datetime.now() # stop the time monitor
     tracemalloc.stop()
-    end = datetime.datetime.now()
+    avg_memory = monitor.average_memory_usage()
     elapsed = (end-start).total_seconds()
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=results_dct, hyperparameter=None, profit=profit_single_ets, elapsed=elapsed,memory=memory, dataset_id=dataset_id, path=path, name='ETS_sinlge')
-    save_model(model=results_dct, hyperparameter=None, profit=profit_multi_ets, elapsed=elapsed, memory=memory, dataset_id=dataset_id, path=path, name='ETS_multi')
+    save_model(model=results_dct, hyperparameter=None, profit=profit_single_ets, elapsed=elapsed, peak_memory=peak_memory, avg_memory=avg_memory, dataset_id=dataset_id, path=path, name='ETS_sinlge')
+    save_model(model=results_dct, hyperparameter=None, profit=profit_multi_ets, elapsed=elapsed, peak_memory=peak_memory, avg_memory=avg_memory, dataset_id=dataset_id, path=path, name='ETS_multi')
 
 
-def save_model(model, hyperparameter, profit, elapsed, memory, dataset_id, path, name):
+def save_model(model, hyperparameter, profit, elapsed, peak_memory, avg_memory, dataset_id, path, name):
     """ Save the model, hyperparameters and profits in a pickle file
 
     Parameters
@@ -1584,7 +1650,8 @@ def save_model(model, hyperparameter, profit, elapsed, memory, dataset_id, path,
         'hyperparameter': hyperparameter,
         'profit': profit,
         'elapsed_time': elapsed,
-        'memory': memory
+        'peak_memory': peak_memory,
+        'avg_memory': avg_memory
     }
     # Create the file names and paths
     file_name_meta = dataset_id +"_"+ name + '_meta.pkl'
@@ -1598,10 +1665,10 @@ def save_model(model, hyperparameter, profit, elapsed, memory, dataset_id, path,
         pickle.dump(data_model, f)
     
 
-############################################################## Appendix ############################################################
+############################################################## Optuna Early Stopping ############################################################
 
 
-OPTUNA_EARLY_STOPING = 10
+OPTUNA_EARLY_STOPING = 50
 
 class EarlyStoppingExceeded(optuna.exceptions.OptunaError):
     early_stop = OPTUNA_EARLY_STOPING
@@ -1624,3 +1691,44 @@ def early_stopping_opt(study, trial):
             EarlyStoppingExceeded.early_stop_count=EarlyStoppingExceeded.early_stop_count+1
     #print(f'EarlyStop counter: {EarlyStoppingExceeded.early_stop_count}, Best score: {study.best_value} and {EarlyStoppingExceeded.best_score}')
     return
+
+
+############################################################## Memory Monitoring ############################################################
+
+
+class MemoryMonitor:
+    """ Monitor the memory usage of the current process"""
+    def __init__(self, interval=1):
+        self.interval = interval # interval of measuring in seconds
+        self.memory_usages = []
+        self.running = False
+        self.thread = None
+        self.process = psutil.Process()
+
+    def _monitor(self):
+        while self.running:
+            mem_info = self.process.memory_info()
+            self.memory_usages.append(mem_info.rss)
+            time.sleep(self.interval)
+
+    def start(self):
+        self.running = True
+        self.thread = threading.Thread(target=self._monitor)
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+        if self.thread:
+            self.thread.join()
+
+    def average_memory_usage(self):
+        if not self.memory_usages:
+            return 0
+        average_usage_bytes = sum(self.memory_usages) / len(self.memory_usages)
+        return average_usage_bytes / (1024 * 1024)  # Convert to megabytes
+    
+    def peak_memory_usage(self):
+        if not self.memory_usages:
+            return 0
+        peak_usage_bytes = max(self.memory_usages)
+        return peak_usage_bytes / (1024 * 1024)  # Convert to megabytes

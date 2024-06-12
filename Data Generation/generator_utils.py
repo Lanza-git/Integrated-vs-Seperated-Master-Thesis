@@ -1,6 +1,66 @@
+def load_packages():
+    # General imports
+    import subprocess
+    import sys
+
+
+    def install(package):
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+    install('pandas')
+    install('numpy')
+    install('scipy')
+    install('scikit-learn')
+
+load_packages()
+
 import numpy as np
 import pandas as pd
 from scipy.stats import multivariate_normal
+import math
+from sklearn.model_selection import train_test_split
+import pickle
+import os
+
+################################################### Data Processing ########################################################################
+
+def split_data(feature_data, target_data, test_size=0.2, val_size=0.2):
+    """ Split the data into training, validation and test sets
+
+    Parameters
+    ---------
+    feature_data : np.array
+        data with only features
+    target_data : np.array
+        data with only target
+    test_size : float
+        proportion of the dataset to include in the test split
+    val_size : float
+        proportion of the dataset to include in the validation split
+
+    Returns
+    ---------
+    X_train : np.array
+        training feature data
+    y_train : np.array
+        training target data
+    X_val : np.array
+        validation feature data
+    y_val : np.array
+        validation target data
+    X_test : np.array
+        test feature data
+    y_test : np.array
+        test target data
+    """
+    # First, split the data into training+validation set and test set
+    X_train_val, X_test, y_train_val, y_test = train_test_split(feature_data, target_data, test_size=test_size, random_state=42)
+
+    # Then, split the training+validation set into training set and validation set
+    val_size_adjusted = val_size / (1 - test_size)  # Adjust the validation size
+    X_train, X_val, y_train, y_val = train_test_split(X_train_val, y_train_val, test_size=val_size_adjusted, random_state=42)
+
+    return X_train, y_train, X_val, y_val, X_test, y_test
 
 
 ################################################### Coefficients ########################################################################
@@ -130,7 +190,7 @@ def get_A_B():
     return A, B
 
 
-################################################### Functions ########################################################################
+################################################### Data Generation Functions ########################################################################
 
 def generate_sigma_U(num_dimensions=3, scale_diagonal=0.05, scale_off_diagonal=0.05):
     """
@@ -233,6 +293,7 @@ def add_dimensions(data, L=1):
         np.array: The expanded dataset with additional noisy features.
     """    
     expanded_data = data.copy()
+    np.random.seed(42)
 
     # Generate new features by adding Gaussian noise to copies of the original features
     for i in range(L):
@@ -248,5 +309,181 @@ def add_dimensions(data, L=1):
     
     return expanded_data
 
+def add_noise_features(data, amount=1):
+    """
+    Add L dimensions to the dataset by creating L noise features with the same distribution as the original features.
+    
+    Parameters:
+        data (np.array): The original dataset, assumed to be an array where rows are samples and columns are features.
+        L (int): The number of noise features to be created.
+        
+    Returns:
+        np.array: The expanded dataset with additional noise features.
+    """    
+    expanded_data = data.copy()
+    np.random.seed(42)
 
-################################################### Main ########################################################################
+    # Generate new features by creating noise with the same distribution as the original features
+    for _ in range(amount):
+        # Compute the mean and standard deviation of the data
+        mean = np.mean(data)
+        std = np.std(data)
+
+        # Generate noise with the same distribution as the data
+        noise_features = np.random.normal(mean, std, data.shape) 
+        
+        # Append the noise features to the dataset
+        expanded_data = np.append(expanded_data, noise_features, axis=1)
+    
+    return expanded_data
+
+def add_heterogenity(data:np.array, factor:float):
+    """ Add heterogenity to the dataset by multiplying a random subset of the data with a factor
+
+    Parameters:
+    -----------
+    data : np.array
+        dataset to add heterogenity to
+    factor : float
+        scale between 0 and 1 that indicates the heterogenity of the dataset
+
+    Returns:
+    -----------
+    data : np.array
+        dataset with added heterogenity
+    hetero_bool : np.array
+        boolean array that indicates which datapoints have been multiplied with the factor
+    """
+    data_size = data.shape[0] # number of datapoints
+    np.random.seed(42) # set seed for reproducibility
+    
+    # Create Boolean array to indicate which datapoints are multiplied with the factor
+    hetero_bool = np.random.choice([0, 1], size=(data_size, 1), p=[(1-factor), factor]) 
+
+    # Multiply the datapoints with the factor
+    for i in range(data_size):
+        if hetero_bool[i,1] == 1:
+            data[i,:] = data[i,:] * (10*factor)
+        
+    return data, hetero_bool
+
+
+################################################### Data Generation ########################################################################
+
+
+def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size:float, volatility:float, heterogenity:float, path):
+    """ Generate an artificial dataset based on the settings and saves it 
+    
+    Parameters:
+    -----------
+    data_size : int
+        indicates size of datapoints (10^1, 10^2, ..., 10^6)^
+        default = 10^5
+    feature_size : int
+        indicates count of features (3, 6, 12, 24, ..., 384)
+        default = 12
+    feature_use : boolean
+        indicates whether additional features give additional info about the target, or they are just noise
+        default = False
+    target_size : int
+        indicates count of features 
+        default = 12
+    volatility : float
+        scale between 0 and 1 that indicates the volatility
+        default = 0.05
+    heterogenity : float
+        scale between 0 and 1 that indicates the heterogenity of the dataset
+        default = 0
+    path : str
+        path to save the data
+        
+    Returns:
+    -----------
+    dataset_id : str
+        unique identifier for the dataset
+    file_path : str
+        path to the saved dataset
+    
+    """
+    dimensions = 3
+
+    """
+    generate the covariance matrix for the innovations U
+    - diagonal: increasing the scale_diagonal increases the variance of the innovations --> more volatile
+    - off-diagonal: increasing the scale_off_diagonal increases the correlation between the innovations --> more synchronized
+    """
+    sigma_U = generate_sigma_U(num_dimensions=dimensions, scale_diagonal=volatility, scale_off_diagonal=0.05)
+    
+
+    """
+    Set up the AutoRegressive coefficents (AR) 
+
+    Influence: How much past values of the time series affect the current value.
+    - decrease: make data more random / unpredictable
+    - increase: make data more predictable
+    """
+    Phi1, Phi2 = generate_phi(num_dimensions=dimensions, factor=1)
+
+    """
+    Set up the Moving Average coefficients (MA)
+
+    Influence: How much past error terms (unexpected shocks) affect the current value.
+    - increse: make data more dependent on past shocks/errors, make data more volatile
+    - decrease: less sensitve to shocks
+    """
+    Theta1, Theta2 = generate_theta(num_dimensions=dimensions, factor=1)
+
+    # simulate the ARMA process
+    X = simulate_arma22(n_periods=data_size, Phi1=Phi1, Phi2=Phi2, Theta1=Theta1, Theta2=Theta2, sigma_U=sigma_U, num_dimensions=dimensions)
+    
+    # Handle additional Features
+    if feature_use == True:
+        # Add L additional copies of the orignial features, that have add each time a bit more info
+        X = pd.DataFrame(add_dimensions(data=X, L=(feature_size/3)))
+        # Drop the original features
+        X = X[:,3:]
+    elif feature_use == False and feature_size > dimensions:
+        # Add noise-features
+        X = add_noise_features(data=X, amount=(feature_size-dimensions))
+
+    # generate the demand with the factor model
+    Y = generate_demand(X=X[:,:3], n_periods=data_size)
+
+    # Handle heterogenity and add boolean feature to indicate heterogenity
+    if heterogenity > 0:
+        Y, hetero_bool = add_heterogenity(data=Y, factor=heterogenity)
+        X = np.append(X, hetero_bool, axis=1)
+    
+    # train, val test split
+    X_train, y_train, X_val, y_val, X_test, y_test = split_data(feature_data=X, target_data=Y, val_size=0.2, test_size=0.2)
+
+    # create dataset ID and dir for the data
+    dataset_id = "set_" + str(int(math.log10(data_size))) + str(int(feature_size)) + str(int(feature_use)) + str(int(target_size)) + str(int(volatility*100)) + str(int(heterogenity*100))
+    final_path = path +"/"+ dataset_id
+    os.makedirs(final_path, exist_ok=True)
+
+    # create file path and save the data
+    file_path = final_path + "/" + dataset_id +"_data.pkl"
+    with open(file_path, 'wb') as f:
+        pickle.dump((X_train, y_train, X_val, y_val, X_test, y_test),f)
+
+    # pickle dataset
+    return {'dataset_id': dataset_id, 'dataset_path': file_path, 'folder_path': final_path}
+
+
+#################################################################### Main ####################################################################
+
+if __name__ == "__main__":
+
+    path = "/pfs/work7/workspace/scratch/ma_elanza-thesislanza"
+
+    dataset_list = []
+
+    # Create data for different sizes (10 - 1.000.000)
+    for i in range(1, 6):
+        dataset_dict = generate_data(data_size=(10**i), feature_size=3, feature_use=False, target_size=12, volatility=0.05, heterogenity=0, path=path)
+        dataset_list.append(dataset_dict)
+
+    with open(path + "/dataset_list.pkl", 'wb') as f:
+        pickle.dump(dataset_list,f)
+
