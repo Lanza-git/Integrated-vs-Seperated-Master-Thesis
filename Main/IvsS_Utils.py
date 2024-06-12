@@ -6,6 +6,7 @@ import logging
 import itertools
 import tracemalloc
 from typing import Tuple
+import math
 
 # Third-party imports
 import numpy as np
@@ -33,12 +34,12 @@ from tensorflow.keras.models import Sequential
 from keras.utils import get_custom_objects
 from scikeras.wrappers import KerasRegressor
 
-
+# Create global variables for the cost structure
 alpha = []
 underage = []
 overage = []
 
-
+# Set up logging
 logger = logging.getLogger(__name__)
 
 ######################## Environment Setup Functions #####################################################################    
@@ -173,16 +174,108 @@ def split_data(feature_data, target_data, test_size=0.2, val_size=0.2):
 
     return X_train, y_train, X_val, y_val, X_test, y_test
 
-
 ######################### Newsvendor related Functions ########################################################
 
+
+def is_feasible(q, d, alpha, M):
+    """
+    Check if the point q satisfies the constraints in the MILP.
+    """
+    n_prods = q.shape[0]
+    hist = d.shape[0]
+    
+    for i in range(n_prods):
+        for t in range(hist):
+            y_t_i = q[i] - d[t, i] - np.sum(alpha[:, i] * np.maximum(d[t, :] - q, 0))
+            v_t_i = np.maximum(d[t, i] - q[i], 0)
+            z_t_i = 0 if q[i] < d[t,i] else 1
+            
+            # Constraints
+            if not (y_t_i >= 0):
+                return False
+            if not (v_t_i <= d[t, i] - q[i] + M[i] * z_t_i):
+                return False
+            if not (v_t_i >= d[t, i] - q[i] - M[i] * z_t_i):
+                return False
+            if not (v_t_i <= d[t, i] * (1 - z_t_i)):
+                return False
+    return True
+
+def monte_carlo_feasible_region_size(d, lower_bound_value, upper_bound_value, num_samples=100000):
+    """
+    Estimate the size of the feasible region using Monte Carlo sampling
+    
+    Parameters:
+    d (numpy.ndarray): Demand samples of shape (n, N_PRODUCTS)
+    alpha (numpy.ndarray): Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
+    u (numpy.ndarray): Underage costs, shape (1, N_PRODUCTS)
+    o (numpy.ndarray): Overage costs, shape (1, N_PRODUCTS)
+    lower_bounds (numpy.ndarray): Lower bounds of the order quantities
+    upper_bounds (numpy.ndarray): Upper bounds of the order quantities
+    num_samples (int): Number of random samples to generate
+    
+    Returns:
+    float: Estimated size of the feasible region
+    """
+    global alpha, underage, overage
+    n_prods = d.shape[1]
+    lower_bounds = np.full(n_prods, lower_bound_value)
+    upper_bounds = np.full(n_prods, upper_bound_value)  
+    M = (np.max(d + np.matmul(d, alpha), axis=0) - np.min(d, axis=0))
+    feasible_count = 0
+    
+    for _ in range(num_samples):
+        # Generate a random point within the variable bounds
+        q = np.random.randint(lower_bounds, upper_bounds + 1, n_prods)
+        
+        # Check if the point is feasible
+        if is_feasible(q, d, alpha, M):
+            feasible_count += 1
+    
+    # Estimate the proportion of feasible points
+    proportion_feasible = feasible_count / num_samples
+    total_region_size = np.prod(upper_bounds) - np.prod(lower_bounds)
+    feasible_region_size = proportion_feasible * total_region_size
+    
+    return feasible_region_size
+
+def calculate_saa_size(y_train:np.array, desired_accuracy:float=0.05, acceptable_deviation:float=0.01, confidence_level:float=0.95):
+    """ Calculate the sample size for the sample average approximation (SAA) method
+
+    based on: "The Data-Driven Newsvendor Problem: New Bounds and Insights" by Retsef Levi, Joline Uichanco, and Georgia Perakis
+
+    Parameters
+    ---------
+    y_train : np.array
+        Demand data for training, shape (T, N_PRODUCTS)
+    desired_accuracy: float
+        Desired accuracy of the SAA method
+    acceptable_deviation: float
+        Tolerated deviation from the true optimal solution
+    feasible_region_size: float
+        Feasible region size of the optimal solution
+    confidence_level: float
+        Confidence level of the SAA method    
+
+    Returns
+    ---------
+    saa_size : int
+        Sample size for the SAA method
+    """
+    variance = np.var(y_train)
+    feasible_region_size = monte_carlo_feasible_region_size(d=y_train, lower_bound_value=20, upper_bound_value=80)
+    print(variance)
+    print(feasible_region_size)
+    sample_size = ((3 * (variance ** 2))/((desired_accuracy-acceptable_deviation)**2))* math.log(feasible_region_size/(1-confidence_level))
+    print(sample_size)
+    return sample_size
+
 def load_cost_structure(alpha_input:np.array, underage_input:np.array, overage_input:np.array):
-    """ Load the cost structure for the newsvendor problem"""
+    """ Initialize the cost structure for the newsvendor problem"""
     global alpha, underage, overage
     alpha = alpha_input
     underage = underage_input
     overage = overage_input
-
 
 def nvps_profit(demand:np.array, q:np.array):
     """ Profit function of the newsvendor under substitution
@@ -339,7 +432,6 @@ def solve_complex_parametric_seperate(y_train:np.array, y_train_pred:np.array, y
 
     return final_order_quantities_parametric
 
-
 def solve_complex_non_parametric_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=10, n_threads:int=40):
     """Solve the complex newsvendor problem in a non-parametric way.
 
@@ -424,9 +516,6 @@ def solve_basic_parametric_seperate(y_train:np.array, y_train_pred:np.array, y_t
     # Calculate the forecast error
     forecast_error = y_train - y_train_pred     #  (T,n)
     forecast_error_std = forecast_error.std(axis=0) # (n,)
-  
-    # Flatten the forecast_error
-    forecast_error_flattened = np.ravel(forecast_error)
 
     # Loop over each week in data_test
     for i in range(len(y_test_pred)):
@@ -489,7 +578,7 @@ def solve_basic_non_parametric_seperate(y_train:np.array, y_train_pred:np.array,
     # Loop over each week in data_test
     for i in range(len(y_test_pred)):
 
-        # Create Demand Scenarios for this week
+        # Create Demand Scenarios based on historical errors for this week (size determined by scenario_size)
         demand_scenarios_non_parametric = y_test_pred[i] + np.random.choice(forecast_error_flattened, size=scenario_size) 
 
         # Initialize a list to store the solutions for each scenario
@@ -545,8 +634,8 @@ def ets_forecast(y_train:np.array, y_val:np.array, y_test_length:int, verbose:in
 
     fit_past = fit_past # training data size (and number of samples in demand distribution estimate)
     timesteps = 1 # number of predictions timesteps (for our application, one-day-ahead predictions)
-
     
+    # initialize variables to store the best configuration and its results
     best_config, best_rmse, best_mape, best_message = None, np.inf, np.inf, None
     best_rmse = np.inf
     results_dct = {}
@@ -589,7 +678,6 @@ def ets_forecast(y_train:np.array, y_val:np.array, y_test_length:int, verbose:in
                 best_rmse = rmse
                 best_mape = mape
                 best_message = message
-
 
         # fit the best model on the whole training set and predict for the test set
         model = ETSModel(target, *best_config)
@@ -717,7 +805,6 @@ def create_NN_model(n_hidden:int, n_neurons:int, activation:str, input_shape:int
     model.compile(loss=custom_loss, optimizer=optimizer, metrics=None)
     return model
 
-
 def tune_NN_model_optuna(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, integrated:bool, patience:int=10, 
                          verbose:int=0, trials:int=100, seed:int=42, threads:int=40):
     """ Tune a neural network model on the given training data with early stopping using Optuna.
@@ -785,7 +872,6 @@ def tune_NN_model_optuna(X_train:np.array, y_train:np.array, X_val:np.array, y_v
         else:
             raise ValueError('Invalid Configuration')
         
-
         #pruning_callback = KerasPruningCallback(trial, 'val_loss')
         model_ANN.fit(X_train, y_train, validation_data=(X_val, y_val),  epochs=epochs, batch_size=batch_size, verbose=verbose) #, callbacks=[pruning_callback]
         # make predictions on validation set and compute profits
@@ -1512,3 +1598,29 @@ def save_model(model, hyperparameter, profit, elapsed, memory, dataset_id, path,
         pickle.dump(data_model, f)
     
 
+############################################################## Appendix ############################################################
+
+
+OPTUNA_EARLY_STOPING = 10
+
+class EarlyStoppingExceeded(optuna.exceptions.OptunaError):
+    early_stop = OPTUNA_EARLY_STOPING
+    early_stop_count = 0
+    best_score = None
+
+def early_stopping_opt(study, trial):
+    if EarlyStoppingExceeded.best_score == None:
+      EarlyStoppingExceeded.best_score = study.best_value
+
+    if study.best_value < EarlyStoppingExceeded.best_score:
+        EarlyStoppingExceeded.best_score = study.best_value
+        EarlyStoppingExceeded.early_stop_count = 0
+    else:
+      if EarlyStoppingExceeded.early_stop_count > EarlyStoppingExceeded.early_stop:
+            EarlyStoppingExceeded.early_stop_count = 0
+            best_score = None
+            raise EarlyStoppingExceeded()
+      else:
+            EarlyStoppingExceeded.early_stop_count=EarlyStoppingExceeded.early_stop_count+1
+    #print(f'EarlyStop counter: {EarlyStoppingExceeded.early_stop_count}, Best score: {study.best_value} and {EarlyStoppingExceeded.best_score}')
+    return
