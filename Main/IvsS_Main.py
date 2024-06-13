@@ -1,5 +1,4 @@
 # Load packages
-#from IvsS_Utils import load_packages
 def load_packages():
     # General imports
     import subprocess
@@ -24,7 +23,7 @@ def load_packages():
     install('psutil')
 
 
-#load_packages()
+load_packages()
 
 # General imports
 import numpy as np
@@ -65,10 +64,18 @@ alpha_data = np.array([             #alpha data
 
 
 def main():
+    path = "/pfs/data5/home/ma/ma_ma/ma_elanza/test_dir/data.csv"
+    trials = 100
+    dataset_id = "test_1"
+    save_path = "/pfs/data5/home/ma/ma_ma/ma_elanza/test_dir/Results_test/"
+
+
+    """
     path = "Main/data.csv" 
     trials = 2
     dataset_id = "test_1"
     save_path = "test/"
+    """
 
     
     # Simple

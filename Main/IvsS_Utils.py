@@ -618,8 +618,6 @@ def ets_forecast(y_train:np.array, y_val:np.array, y_test_length:int, verbose:in
     ----------
     results_dct : dict
         Dictionary containing the results for each product
-    elapsed : float
-        Elapsed time
     """
     N_PRODUCTS = y_train.shape[1] # number of products
     N_TRAIN = y_train.shape[0] # number of training samples
@@ -641,8 +639,6 @@ def ets_forecast(y_train:np.array, y_val:np.array, y_test_length:int, verbose:in
     best_config, best_rmse, best_mape, best_message = None, np.inf, np.inf, None
     best_rmse = np.inf
     results_dct = {}
-    
-    elapsed = 0 # elapsed time in seconds
 
     # loop over products
     for i in range(N_PRODUCTS):
@@ -686,11 +682,9 @@ def ets_forecast(y_train:np.array, y_val:np.array, y_test_length:int, verbose:in
         model = model.fit()
         best_test_pred = model.forecast(N_TEST)
         
-        results_dct[i] = (best_config, best_rmse, best_mape, best_test_pred, best_message) # save results for product "i" and configuration "config"
-        elapsed_i = (datetime.datetime.now()-start_i).total_seconds() # record time
-        elapsed += elapsed_i
+        results_dct[i] = (best_config, best_rmse, best_mape, best_test_pred, best_message) # save results for product "i" and configuration "config
 
-    return results_dct, elapsed
+    return results_dct
 
 def ets_evaluate(y_test:np.array, results_dct:dict):
     """Evaluate the ETS model
@@ -1607,21 +1601,19 @@ def ets_baseline(y_train, y_val, y_test, underage_data, overage_data, alpha_data
     monitor = MemoryMonitor(interval=1)  # monitor every second
     monitor.start()
     start = datetime.datetime.now()
-    tracemalloc.start()
 
     # ETS Forecasting:
     load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data) # Initialize the cost structure
     # Search the best ETS model and forecast the test set
-    results_dct, elapse_time = ets_forecast(y_train=y_train, y_val=y_val, y_test_length=y_test.shape[0], fit_past=fit_past)
+    results_dct = ets_forecast(y_train=y_train, y_val=y_val, y_test_length=y_test.shape[0], fit_past=fit_past)
     # Evaluate the results of the ETS model
     profit_single_ets, profit_multi_ets = ets_evaluate(y_test=y_test, results_dct=results_dct)
 
     # Measure memory usage and elapsed time
     monitor.stop() # stop the average memory monitor
-    peak_memory = tracemalloc.get_traced_memory() # stop the peak memory monitor
+    avg_memory = monitor.average_memory_usage() # read the average memory monitor
+    peak_memory = monitor.peak_memory_usage() # read the peak memory monitor
     end = datetime.datetime.now() # stop the time monitor
-    tracemalloc.stop()
-    avg_memory = monitor.average_memory_usage()
     elapsed = (end-start).total_seconds()
 
     # Save the model, hyperparameters, profit, time and memory usage
@@ -1697,8 +1689,9 @@ def early_stopping_opt(study, trial):
 
 
 class MemoryMonitor:
-    """ Monitor the memory usage of the current process"""
+    """ Class to monitor the memory usage of the current process on a separate thread """
     def __init__(self, interval=1):
+        """ Initialize the memory monitor """
         self.interval = interval # interval of measuring in seconds
         self.memory_usages = []
         self.running = False
@@ -1706,28 +1699,33 @@ class MemoryMonitor:
         self.process = psutil.Process()
 
     def _monitor(self):
+        """ Monitor the memory usage of the current process in the given interval"""
         while self.running:
             mem_info = self.process.memory_info()
             self.memory_usages.append(mem_info.rss)
             time.sleep(self.interval)
 
     def start(self):
+        """ Start the memory monitoring thread """
         self.running = True
         self.thread = threading.Thread(target=self._monitor)
         self.thread.start()
 
     def stop(self):
+        """ Stop the memory monitoring thread """
         self.running = False
         if self.thread:
             self.thread.join()
 
     def average_memory_usage(self):
+        """ Calculate the average memory usage in megabytes over the runing time"""
         if not self.memory_usages:
             return 0
         average_usage_bytes = sum(self.memory_usages) / len(self.memory_usages)
         return average_usage_bytes / (1024 * 1024)  # Convert to megabytes
     
     def peak_memory_usage(self):
+        """ Calculate the peak memory usage in megabytes over the runing time"""
         if not self.memory_usages:
             return 0
         peak_usage_bytes = max(self.memory_usages)

@@ -464,9 +464,11 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
 
     # create file path and save the data
     file_path = final_path + "/" + dataset_id +"_data.pkl"
+    print(path)
+    print(file_path)
     with open(file_path, 'wb') as f:
         pickle.dump((X_train, y_train, X_val, y_val, X_test, y_test),f)
-
+    
     # pickle dataset
     return {'dataset_id': dataset_id, 'dataset_path': file_path, 'folder_path': final_path}
 
@@ -475,15 +477,15 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
 
 if __name__ == "__main__":
 
-    path = "/pfs/work7/workspace/scratch/ma_elanza-thesislanza"
+    save_path = "/pfs/work7/workspace/scratch/ma_elanza-thesislanza"
 
     dataset_list = []
 
     # Create data for different sizes (10 - 1.000.000)
-    for i in range(1, 6):
-        dataset_dict = generate_data(data_size=(10**i), feature_size=3, feature_use=False, target_size=12, volatility=0.05, heterogenity=0, path=path)
+    for i in range(1, 7):
+        dataset_dict = generate_data(data_size=(10**i), feature_size=3, feature_use=False, target_size=12, volatility=0.05, heterogenity=0, path=save_path)
         dataset_list.append(dataset_dict)
 
-    with open(path + "/dataset_list.pkl", 'wb') as f:
+    with open(save_path + "/dataset_list.pkl", 'wb') as f:
         pickle.dump(dataset_list,f)
 
