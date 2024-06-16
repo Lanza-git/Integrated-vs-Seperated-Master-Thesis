@@ -416,7 +416,7 @@ def solve_MILP(d:np.array, n_threads:int=40):
         raise Exception('Optimization was not successful.')
     return orders, model.status
 
-def solve_complex_parametric_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=10, n_threads:int=40):
+def solve_complex_parametric_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=100, n_threads:int=40):
     """Solve the complex newsvendor problem in a parametric way.
 
     Parameters
@@ -473,7 +473,7 @@ def solve_complex_parametric_seperate(y_train:np.array, y_train_pred:np.array, y
 
     return final_order_quantities_parametric
 
-def solve_complex_non_parametric_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=10, n_threads:int=40):
+def solve_complex_non_parametric_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=100, n_threads:int=40):
     """Solve the complex newsvendor problem in a non-parametric way.
 
     Parameters
@@ -1680,6 +1680,8 @@ def save_model(model, hyperparameter, profit, elapsed, peak_memory, avg_memory, 
     path : path to save the model
     name : name of the model
     """
+    path = path + "/"
+    
     # Create dictionaries to save the model and hyperparameters
     data_model = {
         'model': model

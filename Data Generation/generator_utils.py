@@ -54,11 +54,11 @@ def split_data(feature_data, target_data, test_size=0.2, val_size=0.2):
         test target data
     """
     # First, split the data into training+validation set and test set
-    X_train_val, X_test, y_train_val, y_test = train_test_split(feature_data, target_data, test_size=test_size, random_state=42)
+    X_train_val, X_test, y_train_val, y_test = train_test_split(feature_data, target_data, test_size=test_size, shuffle=False)
 
     # Then, split the training+validation set into training set and validation set
     val_size_adjusted = val_size / (1 - test_size)  # Adjust the validation size
-    X_train, X_val, y_train, y_val = train_test_split(X_train_val, y_train_val, test_size=val_size_adjusted, random_state=42)
+    X_train, X_val, y_train, y_val = train_test_split(X_train_val, y_train_val, test_size=val_size_adjusted, shuffle=False)
 
     return X_train, y_train, X_val, y_val, X_test, y_test
 
@@ -148,7 +148,7 @@ def generate_theta(num_dimensions=3, factor=1):
 
 
 
-def get_A_B():
+def get_A_B(target_size=6):
     """
     A: This is a diagonal matrix that scales each dimension of X by 2.5.
     A is the mean-dependence of the ith demand on these factors with some idiosyncratic noise
@@ -187,7 +187,7 @@ def get_A_B():
         [ 1,  0,  1],
         [ 1,  1,  0]
     ])
-    return A, B
+    return A[:target_size,:], B[:target_size,:]
 
 
 ################################################### Data Generation Functions ########################################################################
@@ -244,12 +244,14 @@ def simulate_arma22(n_periods, Phi1, Phi2, Theta1, Theta2, sigma_U, num_dimensio
     U = generate_innovations(n_periods=n_periods, sigma_U=sigma_U, num_dimensions=num_dimensions)
 
     # Simulate the ARMA process
+    X[0] = [1,1,1]
+    X[1] = [1,1,1]
     for t in range(2, n_periods):
         # Calculate the current value based on past values and innovations of the last two periods
         X[t] = Phi1 @ X[t-1] + Phi2 @ X[t-2] + U[t] + Theta1 @ U[t-1] + Theta2 @ U[t-2]
     return X
 
-def generate_demand(X, n_periods):
+def generate_demand(X, n_periods, target_size):
     """
     Generate demand based on the 3-dimensional ARMA process and the factor model. 
 
@@ -268,15 +270,23 @@ def generate_demand(X, n_periods):
     delta: independent noise term. This noise term is added to X to introduce additional variability.
         --> increasing - input features X will have more variability before being transformed - more variability
     """
-    A, B = get_A_B()
+    
+    A, B = get_A_B(target_size)
     # create noise term epsilon
+
+    X = X + 100
+    print(X[0:5,:])
+
     np.random.seed(42)
-    epsilon = np.random.normal(0, 1, (n_periods, 12))
+    epsilon = np.random.normal(0, 1, (n_periods, target_size))
     # create noise term delta
     np.random.seed(24)
     delta = np.random.normal(0, 1, (n_periods, 3)) / 4
     # transform the input features X
-    Y = np.maximum(0, (X + delta) @ A.T + (X @ B.T) * epsilon)        
+    Y = np.maximum(0, (X + delta) @ A.T + (X @ B.T) * epsilon) 
+
+    Y = np.round(Y, 0)    
+    
     return Y
 
 import numpy as np
@@ -387,7 +397,7 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
         default = False
     target_size : int
         indicates count of features 
-        default = 12
+        default = 6
     volatility : float
         scale between 0 and 1 that indicates the volatility
         default = 0.05
@@ -435,7 +445,7 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
 
     # simulate the ARMA process
     X = simulate_arma22(n_periods=data_size, Phi1=Phi1, Phi2=Phi2, Theta1=Theta1, Theta2=Theta2, sigma_U=sigma_U, num_dimensions=dimensions)
-    
+
     # Handle additional Features
     if feature_use == True:
         # Add L additional copies of the orignial features, that have add each time a bit more info
@@ -447,13 +457,14 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
         X = add_noise_features(data=X, amount=(feature_size-dimensions))
 
     # generate the demand with the factor model
-    Y = generate_demand(X=X[:,:3], n_periods=data_size)
+    Y = generate_demand(X=X[:,:3], n_periods=data_size, target_size=(target_size+3))
+    Y = Y[:,3:]
 
     # Handle heterogenity and add boolean feature to indicate heterogenity
     if heterogenity > 0:
         Y, hetero_bool = add_heterogenity(data=Y, factor=heterogenity)
         X = np.append(X, hetero_bool, axis=1)
-    
+
     # train, val test split
     X_train, y_train, X_val, y_val, X_test, y_test = split_data(feature_data=X, target_data=Y, val_size=0.2, test_size=0.2)
 
@@ -483,7 +494,7 @@ if __name__ == "__main__":
 
     # Create data for different sizes (10 - 1.000.000)
     for i in range(1, 7):
-        dataset_dict = generate_data(data_size=(10**i), feature_size=3, feature_use=False, target_size=12, volatility=0.05, heterogenity=0, path=save_path)
+        dataset_dict = generate_data(data_size=(10**i), feature_size=3, feature_use=False, target_size=6, volatility=0.05, heterogenity=0, path=save_path)
         dataset_list.append(dataset_dict)
 
     with open(save_path + "/dataset_list.pkl", 'wb') as f:
