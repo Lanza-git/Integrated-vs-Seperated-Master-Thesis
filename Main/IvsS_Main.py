@@ -29,9 +29,10 @@ load_packages()
 import numpy as np
 
 # custom functions and constants
-from IvsS_Utils import load_data, preprocess_data, split_data, create_environment, calculate_saa_size, load_cost_structure
+from IvsS_Utils import load_data, preprocess_data, split_data, create_environment, load_dict
 from IvsS_Utils import ioa_ann_complex, ioa_ann_simple, ioa_xgb_complex, ioa_xgb_simple
 from IvsS_Utils import soa_ann_complex, soa_ann_simple, soa_xgb_complex, soa_xgb_simple
+from IvsS_Utils import ets_baseline
 
 
 
@@ -62,45 +63,55 @@ alpha_data = np.array([             #alpha data
 
 ####################################### Functions ##############################################################################
 
-
 def main():
-    path = "/pfs/data5/home/ma/ma_ma/ma_elanza/test_dir/data.csv"
+    path = "/pfs/work7/workspace/scratch/ma_elanza-thesislanza/base_set_001"
     trials = 100
-    dataset_id = "test_1"
-    save_path = "/pfs/data5/home/ma/ma_ma/ma_elanza/test_dir/Results_test/"
+
+    # Load the dictionary for the datasets
+    dataset_dict = load_dict(path=path)
+
+    for i in len(dataset_dict):
+        run(path=dataset_dict[i]['dataset_path'], trials=trials, dataset_id=dataset_dict[i]['dataset_id'], save_path=dataset_dict[i]['folder_path'])
 
 
-    """
-    path = "Main/data.csv" 
-    trials = 2
-    dataset_id = "test_1"
-    save_path = "test/"
-    """
-
+    
+def run(path, trials, dataset_id, save_path):
     
     # Simple
-    single_data = load_data(path=path, multi=False)
-    single_feature_data, single_target_data = preprocess_data(raw_data=single_data)
-    X_train, y_train, X_val, y_val, X_test, y_test = split_data(feature_data=single_feature_data, target_data=single_target_data)
+    try:
+        X_train, y_train, X_val, y_val, X_test, y_test = load_data(path=path, multi=False)
+    except:
+        print("Error in loading single data")
     
-    ioa_ann_simple(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
+    try:
+        ioa_ann_simple(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
                    underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
-    
-    soa_ann_simple(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
-                   underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
+    except:
+        print("Error in ioa_ann_simple")
 
-    ioa_xgb_simple(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
+    try:
+        soa_ann_simple(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
                    underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
-    
-    soa_xgb_simple(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
+    except:
+        print("Error in soa_ann_simple")
+
+    try:
+        ioa_xgb_simple(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
                    underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
-    
+    except:
+        print("Error in ioa_xgb_simple")
+
+    try: 
+        soa_xgb_simple(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
+                   underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
+    except:
+        print("Error in soa_xgb_simple")
     
     # Complex  
-    multi_data = load_data(path=path, multi=True)
-    multi_feature_data, multi_target_data = preprocess_data(raw_data=multi_data)
-    X_train, y_train, X_val, y_val, X_test, y_test = split_data(feature_data=multi_feature_data, target_data=multi_target_data, test_size=0.2, val_size=0.2)
-
+    try:
+        X_train, y_train, X_val, y_val, X_test, y_test = load_data(path=path, multi=True)
+    except:
+        print("Error in loading multi data")
     """
     print("start monte carlo")
     load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data)
@@ -108,22 +119,35 @@ def main():
     print(size)
     """
     
-    ioa_ann_complex(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
+    try:
+        ioa_ann_complex(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
                     alpha_data=alpha_data, underage_data=underage_data, overage_data=overage_data, trials=trials, dataset_id=dataset_id, path=save_path)
-    
-    soa_ann_complex(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test,
+    except:
+        print("Error in ioa_ann_complex")
+
+    try:
+        soa_ann_complex(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test,
                     alpha_data=alpha_data, underage_data=underage_data, overage_data=overage_data, trials=trials, dataset_id=dataset_id, path=save_path)
-    
-    ioa_xgb_complex(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test,
+    except:
+        print("Error in soa_ann_complex")
+
+    try:
+        ioa_xgb_complex(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test,
                     alpha_data=alpha_data, underage_data=underage_data, overage_data=overage_data, trials=trials, dataset_id=dataset_id, path=save_path)
-    
-    soa_xgb_complex(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test,
+    except: 
+        print("Error in ioa_xgb_complex")
+
+    try:
+        soa_xgb_complex(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test,
                     alpha_data=alpha_data, underage_data=underage_data, overage_data=overage_data, trials=trials, dataset_id=dataset_id, path=save_path)
-    
-    """
-    ets_baseline(y_train=y_train, y_val=y_val, y_test=y_test, underage_data=underage_data, overage_data=overage_data, alpha_data=alpha_data, 
+    except:
+        print("Error in soa_xgb_complex")
+
+    try:
+        ets_baseline(y_train=y_train, y_val=y_val, y_test=y_test, underage_data=underage_data, overage_data=overage_data, alpha_data=alpha_data, 
                     fit_past=27*7, dataset_id=dataset_id, path=save_path)
-    """
+    except:
+        print("Error in ets_baseline")
 
 
 if __name__ == "__main__":

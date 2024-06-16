@@ -57,6 +57,45 @@ def create_environment():
 
 ######################## Data Handling Functions ############################################################
 
+def load_dict(path:str):
+    """ Load a dictionary from a file
+
+    Parameters
+    ---------
+    path : path to the file
+
+    Returns
+    ---------
+    dictionary : dict
+        dictionary loaded from the file
+    """
+    path = path + "/dataset_list.pkl"
+    with open(path, 'rb') as file:
+        dictionary = pickle.load(file)
+    return dictionary
+
+def load_generated_data(path:str, multi:bool=True):
+    """ Load the generated data for the newsvendor problem from specified location 
+
+    Parameters
+    ---------
+    path : path to the data file
+    
+    Returns
+    ---------
+    raw_data : pd.dataframe
+    """ 
+    # Load Data
+    with open(path, 'rb') as file:
+        X_train, y_train, X_val, y_val, X_test, y_test = pickle.load(file)
+    
+    if multi == False:
+        y_train = y_train[:,0]
+        y_val = y_val[:,0]
+        y_test = y_test[:,0]
+
+    return X_train, y_train, X_val, y_val, X_test, y_test
+
 def load_data(path:str, multi:bool=False):
     """ Load  data for the newsvendor problem from specified location 
 
@@ -958,194 +997,197 @@ def gradient(predt: np.ndarray, dtrain: xgb.DMatrix, ) -> np.ndarray:
         raise
                 
 def hessian(predt: np.ndarray, dtrain: xgb.DMatrix) -> np.ndarray:
-        """ Calculate the hessian of the custom loss function"""
-        return np.ones(predt.shape).reshape(predt.size)
+    """ Calculate the hessian of the custom loss function"""
+    return np.ones(predt.shape).reshape(predt.size)
         
 def custom_loss(predt: np.ndarray, dtrain: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """ Calculate the gradient and hessian of the custom loss function"""
-        grad =  gradient(predt, dtrain)
-        hess =  hessian(predt, dtrain)
-        return grad, hess
+    """ Calculate the gradient and hessian of the custom loss function"""
+    grad =  gradient(predt, dtrain)
+    hess =  hessian(predt, dtrain)
+    return grad, hess
 
 def tune_XGB_model(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, 
                    integrated:bool, patience:int=10, verbose:int=0, trials:int=100, threads:int=40):
-        """ Tune a XGBoost model on the given training data with early stopping using Optuna.
-        
-        Parameters
-        --------------
-        X_train : training feature data (samples, features)
-        y_train : training targets (samples, N_PRODUCTS)
-        X_val : validation feature data (samples, features)
-        y_val : validation targets (samples, N_PRODUCTS)
-        patience : number of epochs without improvement before stopping
-        verbose : verbosity level
-        trials : number of trials for the optimization
-        
-        Returns
-        ----------
-        final_booster : xgb.Booster
-            Final model
-        best_params : dict
-            Best hyperparameters found by Optuna
-        results : dict
-            Results of the optimization
-        """
-        global alpha, underage, overage
+    """ Tune a XGBoost model on the given training data with early stopping using Optuna.
+    
+    Parameters
+    --------------
+    X_train : training feature data (samples, features)
+    y_train : training targets (samples, N_PRODUCTS)
+    X_val : validation feature data (samples, features)
+    y_val : validation targets (samples, N_PRODUCTS)
+    patience : number of epochs without improvement before stopping
+    verbose : verbosity level
+    trials : number of trials for the optimization
+    
+    Returns
+    ----------
+    final_booster : xgb.Booster
+        Final model
+    best_params : dict
+        Best hyperparameters found by Optuna
+    results : dict
+        Results of the optimization
+    """
+    global alpha, underage, overage
 
-        if y_train.shape[1] == 1 and integrated == True:
-            multi_strategy = "one_output_per_tree"
-            custom_objective = "reg:quantileerror"
-            quantile = underage / (underage + overage)
-        elif y_train.shape[1] != 1 and integrated == True:
-            multi_strategy = "multi_output_tree"
-            custom_objective = custom_loss
-            quantile = 0
-        elif y_train.shape[1] == 1 and integrated == False:
-            multi_strategy = "one_output_per_tree"
-            custom_objective = 'reg:squarederror'
-            quantile = 0
-        elif y_train.shape[1] != 1 and integrated == False:
-            multi_strategy = "multi_output_tree"
-            custom_objective = "reg:squarederror"
-            quantile = 0
-        else:
-            raise ValueError('Invalid Configuration')
+    if y_train.shape[1] == 1 and integrated == True:
+        multi_strategy = "one_output_per_tree"
+        custom_objective = "reg:quantileerror"
+        quantile = underage / (underage + overage)
+    elif y_train.shape[1] != 1 and integrated == True:
+        multi_strategy = "multi_output_tree"
+        custom_objective = custom_loss
+        quantile = 0
+    elif y_train.shape[1] == 1 and integrated == False:
+        multi_strategy = "one_output_per_tree"
+        custom_objective = 'reg:squarederror'
+        quantile = 0
+    elif y_train.shape[1] != 1 and integrated == False:
+        multi_strategy = "multi_output_tree"
+        custom_objective = "reg:squarederror"
+        quantile = 0
+    else:
+        raise ValueError('Invalid Configuration')
 
-        # Transform training and validation data to DMatrix
-        X, y = X_train, y_train  
-        Xy = xgb.DMatrix(X, label=y)
-        dval = xgb.DMatrix(X_val, label=y_val)
-        
-        results = {} # initialize results dict
-        
-        # Optuna hyperparameter optimization
-        def objective(trial):
-            # if custom objective is used, we need to pass the custom loss function
-            if custom_objective != custom_loss:
-                params = {
-                    "tree_method": "hist",
-                    "num_target": y.shape[1],
-                    "multi_strategy": multi_strategy,
-                    "learning_rate": trial.suggest_float("learning_rate", 0.1, 0.5),
-                    "max_depth": trial.suggest_int("max_depth", 2, 6),
-                    "subsample": trial.suggest_float("subsample", 0.3, 0.9),
-                    "quantile_alpha": quantile,
-                    "objective": custom_objective,
-                }
-                booster = xgb.train(
-                    params,
-                    dtrain=Xy,
-                    num_boost_round=128,
-                    evals=[(dval, "val")],
-                    evals_result=results,
-                    early_stopping_rounds=patience,
-                    verbose_eval=verbose                
-                )
-            # if no custom objective is used, we can use the default objective
-            else:
-                params = {
-                    "tree_method": "hist",
-                    "num_target": y.shape[1],
-                    "multi_strategy": multi_strategy,
-                    "learning_rate": trial.suggest_float("learning_rate", 0.1, 0.5),
-                    "max_depth": trial.suggest_int("max_depth", 2, 6),
-                    "subsample": trial.suggest_float("subsample", 0.3, 0.9),
-                    "quantile_alpha": quantile,
-                }
-                booster = xgb.train(
-                params,
-                    dtrain=Xy,
-                    num_boost_round=128,
-                    obj=custom_objective,
-                    evals=[(dval, "val")],
-                    evals_result=results,
-                    early_stopping_rounds=patience,
-                    verbose_eval=verbose
-                )
-        
-            # make predictions on validation set and compute profits
-            val_set = xgb.DMatrix(X_val)
-            q_val = booster.predict(val_set)
-
-            # If integrated, we can use the profit function, 
-            #       otherwise we use the negative absolute error (otherwise we would "cheat")
-            if integrated:
-                result = np.mean(nvps_profit(y_val, q_val))
-            else:
-                result = -np.abs(np.mean(q_val-y_val))
-            return result
-
-        # Create the study and optimize the objective function
-        study = optuna.create_study(direction="maximize")
-        study.optimize(objective, n_trials=trials, n_jobs=threads)  
-
-        # Get the best parameters
-        best_params = study.best_trial.params
-
-        # Add the fixed parameters
-        if custom_objective !=  custom_loss:
-            best_params.update({
+    # Transform training and validation data to DMatrix
+    X, y = X_train, y_train  
+    Xy = xgb.DMatrix(X, label=y)
+    dval = xgb.DMatrix(X_val, label=y_val)
+    
+    results = {} # initialize results dict
+    
+    # Optuna hyperparameter optimization
+    def objective(trial):
+        # if custom objective is used, we need to pass the custom loss function
+        if custom_objective != custom_loss:
+            params = {
                 "tree_method": "hist",
                 "num_target": y.shape[1],
                 "multi_strategy": multi_strategy,
+                "learning_rate": trial.suggest_float("learning_rate", 0.1, 0.5),
+                "max_depth": trial.suggest_int("max_depth", 2, 6),
+                "subsample": trial.suggest_float("subsample", 0.3, 0.9),
                 "quantile_alpha": quantile,
                 "objective": custom_objective,
-            })
-        else:
-            best_params.update({
-                "tree_method": "hist",
-                "num_target": y.shape[1],
-                "multi_strategy": multi_strategy,
-            })
-
-        # Train the final model
-        if custom_objective != custom_loss:
-            final_booster = xgb.train(
-                best_params,
+            }
+            booster = xgb.train(
+                params,
                 dtrain=Xy,
                 num_boost_round=128,
                 evals=[(dval, "val")],
-                verbose_eval=verbose
+                evals_result=results,
+                early_stopping_rounds=patience,
+                verbose_eval=verbose                
             )
+        # if no custom objective is used, we can use the default objective
         else:
-            final_booster = xgb.train(
-                best_params,
+            params = {
+                "tree_method": "hist",
+                "num_target": y.shape[1],
+                "multi_strategy": multi_strategy,
+                "learning_rate": trial.suggest_float("learning_rate", 0.1, 0.5),
+                "max_depth": trial.suggest_int("max_depth", 2, 6),
+                "subsample": trial.suggest_float("subsample", 0.3, 0.9),
+                "quantile_alpha": quantile,
+            }
+            booster = xgb.train(
+            params,
                 dtrain=Xy,
                 num_boost_round=128,
                 obj=custom_objective,
                 evals=[(dval, "val")],
+                evals_result=results,
+                early_stopping_rounds=patience,
                 verbose_eval=verbose
             )
-        # return the final model, best parameters and results
-        return final_booster, best_params, results
+    
+        # make predictions on validation set and compute profits
+        val_set = xgb.DMatrix(X_val)
+        q_val = booster.predict(val_set)
 
-def train_XGB_model(hyperparameter:dict, X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array):
-        """ Train a XGBoost model on the given training data with given hyperparameters.
+        # If integrated, we can use the profit function, 
+        #       otherwise we use the negative absolute error (otherwise we would "cheat")
+        if integrated:
+            result = np.mean(nvps_profit(y_val, q_val))
+        else:
+            result = -np.abs(np.mean(q_val-y_val))
+        return result
 
-        Parameters
-        --------------
-        hyperparameter : hyperparameters for the XGBoost model
-        X_train : training feature data
-        y_train : training targets
-        X_val : validation feature data
-        y_val : validation targets
+    # Create the study and optimize the objective function
+    study = optuna.create_study(direction='maximize')
+    try:
+        study.optimize(objective, n_trials=trials, n_jobs=threads, callbacks=[early_stopping_opt])
+    except EarlyStoppingExceeded:
+        print(f'EarlyStopping Exceeded: No new best scores on iters {OPTUNA_EARLY_STOPING}')        
 
-        Returns
-        ----------
-        final_booster : xgb.Booster
-            Final model
-        """
-        # Train the final model
-        Xy = xgb.DMatrix(X_train, label=y_train)
-        dval = xgb.DMatrix(X_val, label=y_val)
+    # Get the best parameters
+    best_params = study.best_trial.params
+
+    # Add the fixed parameters
+    if custom_objective !=  custom_loss:
+        best_params.update({
+            "tree_method": "hist",
+            "num_target": y.shape[1],
+            "multi_strategy": multi_strategy,
+            "quantile_alpha": quantile,
+            "objective": custom_objective,
+        })
+    else:
+        best_params.update({
+            "tree_method": "hist",
+            "num_target": y.shape[1],
+            "multi_strategy": multi_strategy,
+        })
+
+    # Train the final model
+    if custom_objective != custom_loss:
         final_booster = xgb.train(
-            hyperparameter,
+            best_params,
             dtrain=Xy,
             num_boost_round=128,
-            obj= custom_loss,
-            evals=[(dval, "val")]
+            evals=[(dval, "val")],
+            verbose_eval=verbose
         )
-        return final_booster
+    else:
+        final_booster = xgb.train(
+            best_params,
+            dtrain=Xy,
+            num_boost_round=128,
+            obj=custom_objective,
+            evals=[(dval, "val")],
+            verbose_eval=verbose
+        )
+    # return the final model, best parameters and results
+    return final_booster, best_params, results
+
+def train_XGB_model(hyperparameter:dict, X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array):
+    """ Train a XGBoost model on the given training data with given hyperparameters.
+
+    Parameters
+    --------------
+    hyperparameter : hyperparameters for the XGBoost model
+    X_train : training feature data
+    y_train : training targets
+    X_val : validation feature data
+    y_val : validation targets
+
+    Returns
+    ----------
+    final_booster : xgb.Booster
+        Final model
+    """
+    # Train the final model
+    Xy = xgb.DMatrix(X_train, label=y_train)
+    dval = xgb.DMatrix(X_val, label=y_val)
+    final_booster = xgb.train(
+        hyperparameter,
+        dtrain=Xy,
+        num_boost_round=128,
+        obj= custom_loss,
+        evals=[(dval, "val")]
+    )
+    return final_booster
 
 ############################################################### Approach Handler ########################################################
 
@@ -1615,9 +1657,13 @@ def ets_baseline(y_train, y_val, y_test, underage_data, overage_data, alpha_data
     peak_memory = monitor.peak_memory_usage() # read the peak memory monitor
     end = datetime.datetime.now() # stop the time monitor
     elapsed = (end-start).total_seconds()
+    n_products = y_test.shape[1]
+    elapsed_single = elapsed/n_products
+    avg_memory_single = avg_memory/n_products
+    peak_memory_single = peak_memory/n_products
 
     # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=results_dct, hyperparameter=None, profit=profit_single_ets, elapsed=elapsed, peak_memory=peak_memory, avg_memory=avg_memory, dataset_id=dataset_id, path=path, name='ETS_sinlge')
+    save_model(model=results_dct, hyperparameter=None, profit=profit_single_ets, elapsed=elapsed_single, peak_memory=peak_memory_single, avg_memory=avg_memory_single, dataset_id=dataset_id, path=path, name='ETS_sinlge')
     save_model(model=results_dct, hyperparameter=None, profit=profit_multi_ets, elapsed=elapsed, peak_memory=peak_memory, avg_memory=avg_memory, dataset_id=dataset_id, path=path, name='ETS_multi')
 
 
