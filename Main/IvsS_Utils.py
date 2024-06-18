@@ -8,6 +8,7 @@ from typing import Tuple
 import math
 import threading
 import time
+import h5py
 
 # Third-party imports
 import numpy as np
@@ -16,6 +17,7 @@ from scipy.stats import norm
 from statsmodels.tsa.exponential_smoothing.ets import ETSModel
 import optuna
 from optuna_integration.keras import KerasPruningCallback
+from optuna.integration import XGBoostPruningCallback
 import gurobipy as gp
 from gurobipy import GRB
 import xgboost as xgb
@@ -35,6 +37,7 @@ from tensorflow.keras.layers import Dense, Input
 from tensorflow.keras.models import Sequential
 from keras.utils import get_custom_objects
 from scikeras.wrappers import KerasRegressor
+from tensorflow.keras.utils import Sequence
 
 # Create global variables for the cost structure
 alpha = []
@@ -840,9 +843,13 @@ def create_NN_model(n_hidden:int, n_neurons:int, activation:str, input_shape:int
     model.compile(loss=custom_loss, optimizer=optimizer, metrics=None)
     return model
 
-def tune_NN_model_optuna(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, integrated:bool, patience:int=10, 
+def tune_NN_model_optuna(file_path:str, input_shape:int, output_shape:int, val_size:int, integrated:bool, patience:int=10, 
                          verbose:int=0, trials:int=100, seed:int=42, threads:int=40):
-    """ Tune a neural network model on the given training data with early stopping using Optuna.
+        
+    """
+        X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, integrated:bool, patience:int=10, 
+                         verbose:int=0, trials:int=100, seed:int=42, threads:int=40):
+     Tune a neural network model on the given training data with early stopping using Optuna.
     
     Parameters
     --------------
@@ -871,12 +878,12 @@ def tune_NN_model_optuna(X_train:np.array, y_train:np.array, X_val:np.array, y_v
     tf.random.set_seed(seed)
     np.random.seed(seed)
 
-    # define dimensions
-    output_shape = y_train.shape[1] #N_PRODUCTS
-    input_shape = X_train.shape[1] #N_FEATURES
-
     # Optuna hyperparameter optimization
     def objective(trial):
+
+        # define the early stopping callback
+        pruning_callback = KerasPruningCallback(trial, 'val_loss')
+
         # define the hyperparameters space
         n_hidden = trial.suggest_int('n_hidden', 0, 10)
         n_neurons = trial.suggest_int('n_neurons', 1, 30)
@@ -907,35 +914,41 @@ def tune_NN_model_optuna(X_train:np.array, y_train:np.array, X_val:np.array, y_v
         else:
             raise ValueError('Invalid Configuration')
         
+        # Create the generators
+        train_generator = HDF5DataGenerator(file_path, 'X_train', 'y_train', batch_size=batch_size)
+        val_generator = HDF5DataGenerator(file_path, 'X_val', 'y_val', batch_size=batch_size)
+        
         #pruning_callback = KerasPruningCallback(trial, 'val_loss')
-        model_ANN.fit(X_train, y_train, validation_data=(X_val, y_val),  epochs=epochs, batch_size=batch_size, verbose=verbose) #, callbacks=[pruning_callback]
-        # make predictions on validation set and compute profits
-        q_val = model_ANN.predict(X_val)
+        model_ANN.fit(train_generator, validation_data=val_generator,  epochs=epochs, batch_size=batch_size, verbose=verbose, callbacks=[pruning_callback])
+        
+        # Create another generator for prediction
+        pred_generator = HDF5DataGenerator(file_path, 'X_val', 'y_val', batch_size=batch_size)
+
+        # Make predictions on validation set and compute profits
+        q_val = model_ANN.predict_generator(pred_generator, steps=val_size//batch_size)
 
         # If integrated, we can use the profit function, 
         #       otherwise we use the negative absolute error (otherwise we would "cheat")
         if integrated:
-            result = np.mean(nvps_profit(y_val, q_val))
+            result = np.mean(nvps_profit(pred_generator.get_labels(), q_val))
         else:
-            result = -np.abs(np.mean(q_val-y_val))
+            result = -np.abs(np.mean(q_val-pred_generator.get_labels()))
 
         return result
+
     study = optuna.create_study(direction='maximize')
-    try:
-        study.optimize(objective, n_trials=trials, n_jobs=threads, callbacks=[early_stopping_opt])
-    except EarlyStoppingExceeded:
-        print(f'EarlyStopping Exceeded: No new best scores on iters {OPTUNA_EARLY_STOPING}')
+    study.optimize(objective, n_trials=trials, n_jobs=threads, gc_after_trial=True)
 
 
     # Get the best parameters and best estimator
     best_params = study.best_params
     hyperparameter = [best_params['n_hidden'], best_params['n_neurons'],best_params['learning_rate'], 
                     best_params['epochs'], patience, best_params['batch_size'], best_params['activation']]
-    best_estimator = train_NN_model(hyperparameter, X_train, y_train, X_val, y_val, integrated)
+    best_estimator = train_NN_model(hp=hyperparameter,file_path=file_path, input_shape=input_shape, output_shape=output_shape, integrated=integrated,verbose=verbose)
     
     return best_estimator, hyperparameter, study.best_value
 
-def train_NN_model(hp:list, X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, integrated:bool, verbose:int=0):
+def train_NN_model(hp:list, file_path:str, input_shape:int, output_shape:int, integrated:bool, verbose:int=0):
     """ Train a network on the given training data with early stopping.
     
     Parameters
@@ -957,8 +970,6 @@ def train_NN_model(hp:list, X_train:np.array, y_train:np.array, X_val:np.array, 
     np.random.seed(42)
 
     global alpha, underage, overage
-    # define dimensions
-    output_shape = y_train.shape[1] #N_PRODUCTS
 
     # construct loss function based on the number of products
     if  integrated == False:
@@ -971,12 +982,17 @@ def train_NN_model(hp:list, X_train:np.array, y_train:np.array, X_val:np.array, 
     # extract hyperparameters, build and compile MLP
     hidden_nodes, n_neurons, lr, max_epochs, patience, batch_size, activation = hp
     mlp =  create_NN_model(n_hidden=hidden_nodes, n_neurons=n_neurons, activation=activation, 
-                        input_shape=X_train.shape[1], learning_rate=lr, custom_loss=loss, 
-                        output_shape=y_train.shape[1])
+                        input_shape=input_shape, learning_rate=lr, custom_loss=loss, 
+                        output_shape=output_shape)
 
     # train MLP with early stopping
     callback = EarlyStopping(monitor='val_loss', patience=patience)
-    mlp.fit(X_train, y_train, epochs=max_epochs, batch_size=batch_size, validation_data=(X_val, y_val),
+
+    # Create the generators
+    train_generator = HDF5DataGenerator(file_path, 'X_train', 'y_train', batch_size=batch_size)
+    val_generator = HDF5DataGenerator(file_path, 'X_val', 'y_val', batch_size=batch_size)
+
+    mlp.fit(train_generator, epochs=max_epochs, batch_size=batch_size, validation_data=val_generator,
             verbose=verbose, callbacks=[callback])
     
     return mlp
@@ -1049,16 +1065,17 @@ def tune_XGB_model(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
         quantile = 0
     else:
         raise ValueError('Invalid Configuration')
-
-    # Transform training and validation data to DMatrix
-    X, y = X_train, y_train  
-    Xy = xgb.DMatrix(X, label=y)
-    dval = xgb.DMatrix(X_val, label=y_val)
-    
+  
     results = {} # initialize results dict
     
     # Optuna hyperparameter optimization
     def objective(trial):
+
+        # Transform training and validation data to DMatrix
+        X, y = X_train, y_train  
+        Xy = xgb.DMatrix(X, label=y)
+        dval = xgb.DMatrix(X_val, label=y_val)
+
         # if custom objective is used, we need to pass the custom loss function
         if custom_objective != custom_loss:
             params = {
@@ -1078,7 +1095,8 @@ def tune_XGB_model(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
                 evals=[(dval, "val")],
                 evals_result=results,
                 early_stopping_rounds=patience,
-                verbose_eval=verbose                
+                verbose_eval=verbose,
+                callbacks=[XGBoostPruningCallback(trial, "val-rmse")]         
             )
         # if no custom objective is used, we can use the default objective
         else:
@@ -1099,7 +1117,8 @@ def tune_XGB_model(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
                 evals=[(dval, "val")],
                 evals_result=results,
                 early_stopping_rounds=patience,
-                verbose_eval=verbose
+                verbose_eval=verbose,
+                callbacks=[XGBoostPruningCallback(trial, "val-rmse")]
             )
     
         # make predictions on validation set and compute profits
@@ -1116,10 +1135,13 @@ def tune_XGB_model(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
 
     # Create the study and optimize the objective function
     study = optuna.create_study(direction='maximize')
-    try:
-        study.optimize(objective, n_trials=trials, n_jobs=threads, callbacks=[early_stopping_opt])
-    except EarlyStoppingExceeded:
-        print(f'EarlyStopping Exceeded: No new best scores on iters {OPTUNA_EARLY_STOPING}')        
+    
+    study.optimize(objective, n_trials=trials, n_jobs=threads, gc_after_trial=True)
+
+    # Transform training and validation data to DMatrix
+    X, y = X_train, y_train  
+    Xy = xgb.DMatrix(X, label=y)
+    dval = xgb.DMatrix(X_val, label=y_val)
 
     # Get the best parameters
     best_params = study.best_trial.params
@@ -1191,7 +1213,7 @@ def train_XGB_model(hyperparameter:dict, X_train:np.array, y_train:np.array, X_v
 
 ############################################################### Approach Handler ########################################################
 
-def ioa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
+def ioa_ann_simple(file_path:str, input_shape:int, val_size:int, X_test:np.array, y_test:np.array, 
                    underage_data_single:np.array, overage_data_single:np.array, trials:int, dataset_id:str, path:str):
     """ Train and evaluate the integrated optimization approach with a simple ANN model and saves model, hyperparameters and profit
 
@@ -1216,7 +1238,7 @@ def ioa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     # Integrated Optimization Approach - ANN - simple:
     load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single) # Initialize the cost structure
     # Tune the ANN model with Optuna
-    model_ANN_simple, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=True, trials=trials)
+    model_ANN_simple, hyperparameter, val_profit = tune_NN_model_optuna(file_path=file_path, input_shape=input_shape, output_shape=1, val_size=val_size, integrated=True, trials=trials)
     # Make predictions on the test set
     target_prediction_ANN = model_ANN_simple.predict(X_test)
     # Calculate the profit of the predictions
@@ -1681,7 +1703,7 @@ def save_model(model, hyperparameter, profit, elapsed, peak_memory, avg_memory, 
     name : name of the model
     """
     path = path + "/"
-    
+
     # Create dictionaries to save the model and hyperparameters
     data_model = {
         'model': model
@@ -1703,38 +1725,42 @@ def save_model(model, hyperparameter, profit, elapsed, peak_memory, avg_memory, 
         pickle.dump(data_meta, f)
     with open(path_name_model, 'wb') as f:
         pickle.dump(data_model, f)
-    
 
-############################################################## Optuna Early Stopping ############################################################
+############################################################## Data Generator ############################################################
 
+class HDF5DataGenerator(Sequence):
+    def __init__(self, file_path, X_dataset_name, y_dataset_name, batch_size=32, shuffle=True):
+        self.file_path = file_path
+        self.X_dataset_name = X_dataset_name
+        self.y_dataset_name = y_dataset_name
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        
+        with h5py.File(self.file_path, 'r') as f:
+            self.data_len = len(f[self.X_dataset_name])
+        self.indexes = np.arange(self.data_len)
+        self.on_epoch_end()
 
-OPTUNA_EARLY_STOPING = 50
+    def __len__(self):
+        return int(np.floor(self.data_len / self.batch_size))
 
-class EarlyStoppingExceeded(optuna.exceptions.OptunaError):
-    early_stop = OPTUNA_EARLY_STOPING
-    early_stop_count = 0
-    best_score = None
+    def __getitem__(self, index):
+        batch_indexes = self.indexes[index * self.batch_size:(index + 1) * self.batch_size]
+        X, y = self.__data_generation(batch_indexes)
+        return X, y
 
-def early_stopping_opt(study, trial):
-    if EarlyStoppingExceeded.best_score == None:
-      EarlyStoppingExceeded.best_score = study.best_value
+    def on_epoch_end(self):
+        if self.shuffle:
+            np.random.shuffle(self.indexes)
 
-    if study.best_value < EarlyStoppingExceeded.best_score:
-        EarlyStoppingExceeded.best_score = study.best_value
-        EarlyStoppingExceeded.early_stop_count = 0
-    else:
-      if EarlyStoppingExceeded.early_stop_count > EarlyStoppingExceeded.early_stop:
-            EarlyStoppingExceeded.early_stop_count = 0
-            best_score = None
-            raise EarlyStoppingExceeded()
-      else:
-            EarlyStoppingExceeded.early_stop_count=EarlyStoppingExceeded.early_stop_count+1
-    #print(f'EarlyStop counter: {EarlyStoppingExceeded.early_stop_count}, Best score: {study.best_value} and {EarlyStoppingExceeded.best_score}')
-    return
+    def __data_generation(self, batch_indexes):
+        with h5py.File(self.file_path, 'r') as f:
+            X = f[self.X_dataset_name][batch_indexes]
+            y = f[self.y_dataset_name][batch_indexes]
+        return X, y
 
 
 ############################################################## Memory Monitoring ############################################################
-
 
 class MemoryMonitor:
     """ Class to monitor the memory usage of the current process on a separate thread """

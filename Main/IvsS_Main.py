@@ -70,12 +70,15 @@ def main():
     # Load the dictionary for the datasets
     dataset_dict = load_dict(path=path)
 
+    run(path=dataset_dict[6]['dataset_path'], trials=trials, dataset_id=dataset_dict[6]['dataset_id'], save_path=dataset_dict[6]['folder_path'])
+
+    """
     for i in range(len(dataset_dict)):
         print("Dataset: ", dataset_dict[i]['dataset_id'])
         print("Path: ", dataset_dict[i]['dataset_path'])
         print("Folder: ", dataset_dict[i]['folder_path'])
         run(path=dataset_dict[i]['dataset_path'], trials=trials, dataset_id=dataset_dict[i]['dataset_id'], save_path=dataset_dict[i]['folder_path'])
-        
+    """  
 
     
 def run(path, trials, dataset_id, save_path):
@@ -114,7 +117,9 @@ def run(path, trials, dataset_id, save_path):
         print("Error in soa_xgb_simple", e)
     
     # Complex  
-    X_train, y_train, X_val, y_val, X_test, y_test = load_generated_data(path=path, multi=True)
+    y_train = y_train[:,0]
+    y_val = y_val[:,0]
+    y_test = y_test[:,0]
 
     """
     print("start monte carlo")

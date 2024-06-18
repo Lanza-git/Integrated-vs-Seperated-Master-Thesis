@@ -21,10 +21,11 @@ import math
 from sklearn.model_selection import train_test_split
 import pickle
 import os
+import h5py
 
 ################################################### Data Processing ########################################################################
 
-def split_data(feature_data, target_data, test_size=0.2, val_size=0.2):
+def split_data(feature_data, target_data,data_size, test_size=1000, val_size=0.2):
     """ Split the data into training, validation and test sets
 
     Parameters
@@ -56,9 +57,11 @@ def split_data(feature_data, target_data, test_size=0.2, val_size=0.2):
     # First, split the data into training+validation set and test set
     X_train_val, X_test, y_train_val, y_test = train_test_split(feature_data, target_data, test_size=test_size, shuffle=False)
 
+    X_train_val = X_train_val[-data_size:]
+    y_train_val = y_train_val[-data_size:]
+
     # Then, split the training+validation set into training set and validation set
-    val_size_adjusted = val_size / (1 - test_size)  # Adjust the validation size
-    X_train, X_val, y_train, y_val = train_test_split(X_train_val, y_train_val, test_size=val_size_adjusted, shuffle=False)
+    X_train, X_val, y_train, y_val = train_test_split(X_train_val, y_train_val, test_size=val_size)
 
     return X_train, y_train, X_val, y_val, X_test, y_test
 
@@ -416,6 +419,7 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
     
     """
     dimensions = 3
+    set_length = 10**6 + 100 # add 100 as test size
 
     """
     generate the covariance matrix for the innovations U
@@ -444,7 +448,7 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
     Theta1, Theta2 = generate_theta(num_dimensions=dimensions, factor=1)
 
     # simulate the ARMA process
-    X = simulate_arma22(n_periods=data_size, Phi1=Phi1, Phi2=Phi2, Theta1=Theta1, Theta2=Theta2, sigma_U=sigma_U, num_dimensions=dimensions)
+    X = simulate_arma22(n_periods=set_length, Phi1=Phi1, Phi2=Phi2, Theta1=Theta1, Theta2=Theta2, sigma_U=sigma_U, num_dimensions=dimensions)
 
     # Handle additional Features
     if feature_use == True:
@@ -457,7 +461,7 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
         X = add_noise_features(data=X, amount=(feature_size-dimensions))
 
     # generate the demand with the factor model
-    Y = generate_demand(X=X[:,:3], n_periods=data_size, target_size=(target_size+3))
+    Y = generate_demand(X=X[:,:3], n_periods=set_length, target_size=(target_size+3))
     Y = Y[:,3:]
 
     # Handle heterogenity and add boolean feature to indicate heterogenity
@@ -466,7 +470,7 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
         X = np.append(X, hetero_bool, axis=1)
 
     # train, val test split
-    X_train, y_train, X_val, y_val, X_test, y_test = split_data(feature_data=X, target_data=Y, val_size=0.2, test_size=0.2)
+    X_train, y_train, X_val, y_val, X_test, y_test = split_data(feature_data=X, target_data=Y, val_size=0.2, test_size=100, data_size=data_size)
 
     # create dataset ID and dir for the data
     dataset_id = "set_" + str(int(math.log10(data_size))) + str(int(feature_size)) + str(int(feature_use)) + str(int(target_size)) + str(int(volatility*100)) + str(int(heterogenity*100))
@@ -474,11 +478,16 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
     os.makedirs(final_path, exist_ok=True)
 
     # create file path and save the data
-    file_path = final_path + "/" + dataset_id +"_data.pkl"
+    file_path = final_path + "/" + dataset_id +"_data.h5"
     print(path)
     print(file_path)
-    with open(file_path, 'wb') as f:
-        pickle.dump((X_train, y_train, X_val, y_val, X_test, y_test),f)
+    with h5py.File(file_path, 'w') as f:
+        f.create_dataset('X_train', data=X_train)
+        f.create_dataset('y_train', data=y_train)
+        f.create_dataset('X_val', data=X_val)
+        f.create_dataset('y_val', data=y_val)
+        f.create_dataset('X_test', data=X_test)
+        f.create_dataset('y_test', data=y_test)
     
     # pickle dataset
     return {'dataset_id': dataset_id, 'dataset_path': file_path, 'folder_path': final_path}
