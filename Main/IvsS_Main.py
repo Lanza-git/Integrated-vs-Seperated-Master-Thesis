@@ -63,22 +63,21 @@ alpha_data = np.array([             #alpha data
 
 ####################################### Functions ##############################################################################
 
-def main():
+def main(dataset_id):
     path = "/pfs/work7/workspace/scratch/ma_elanza-thesislanza/"
     trials = 100
 
     # Load the dictionary for the datasets
     dataset_dict = load_dict(path=path)
 
-    run(path=dataset_dict[6]['dataset_path'], trials=trials, dataset_id=dataset_dict[6]['dataset_id'], save_path=dataset_dict[6]['folder_path'])
+    # Get thr right entry from the dictionary
+    for dataset in dataset_dict:
+        if dataset['dataset_id'] == dataset_id:
+            dataset_path = dataset['dataset_path']
+            folder_path = dataset['folder_path']
+            break
 
-    """
-    for i in range(len(dataset_dict)):
-        print("Dataset: ", dataset_dict[i]['dataset_id'])
-        print("Path: ", dataset_dict[i]['dataset_path'])
-        print("Folder: ", dataset_dict[i]['folder_path'])
-        run(path=dataset_dict[i]['dataset_path'], trials=trials, dataset_id=dataset_dict[i]['dataset_id'], save_path=dataset_dict[i]['folder_path'])
-    """  
+    run(path=dataset_path, trials=trials, dataset_id=dataset_id, save_path=folder_path)
 
     
 def run(path, trials, dataset_id, save_path):
@@ -95,74 +94,87 @@ def run(path, trials, dataset_id, save_path):
     try:
         ioa_ann_simple(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
                    underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
+        print("ioa_ann_simple done: ", dataset_id)
     except Exception as e:
         print("Error in ioa_ann_simple", e)
 
     try:
         soa_ann_simple(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
                    underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
+        print("soa_ann_simple done: ", dataset_id)
     except Exception as e:
         print("Error in soa_ann_simple", e)
-
+    
     try:
+        print("ioa_xgb_simple")
         ioa_xgb_simple(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
                    underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
+        print("ioa_xgb_simple done: ", dataset_id)
     except Exception as e:
         print("Error in ioa_xgb_simple", e)
-
+    
     try: 
         soa_xgb_simple(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
                    underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
+        print("soa_xgb_simple done: ", dataset_id)
     except Exception as e:  
         print("Error in soa_xgb_simple", e)
     
     # Complex  
-    y_train = y_train[:,0]
-    y_val = y_val[:,0]
-    y_test = y_test[:,0]
+    X_train, y_train, X_val, y_val, X_test, y_test = load_generated_data(path=path, multi=True)
+    print("X train shape", X_train.shape)
+    print("y train shape", y_train.shape)
 
-    """
-    print("start monte carlo")
-    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data)
-    size = calculate_saa_size(y_train)
-    print(size)
-    """
+
+
     
     try:
         ioa_ann_complex(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test, 
                     alpha_data=alpha_data, underage_data=underage_data, overage_data=overage_data, trials=trials, dataset_id=dataset_id, path=save_path)
+        print("ioa_ann_complex done: ", dataset_id)
     except Exception as e:
         print("Error in ioa_ann_complex", e)
 
     try:
         soa_ann_complex(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test,
                     alpha_data=alpha_data, underage_data=underage_data, overage_data=overage_data, trials=trials, dataset_id=dataset_id, path=save_path)
+        print("soa_ann_complex done: ", dataset_id)
     except Exception as e:
         print("Error in soa_ann_complex", e)
-
+    
     try:
+        print("ioa_xgb_complex")
         ioa_xgb_complex(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test,
                     alpha_data=alpha_data, underage_data=underage_data, overage_data=overage_data, trials=trials, dataset_id=dataset_id, path=save_path)
+        print("ioa_xgb_complex done: ", dataset_id)
     except Exception as e: 
         print("Error in ioa_xgb_complex", e)
-
+    
     try:
         soa_xgb_complex(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, X_test=X_test, y_test=y_test,
                     alpha_data=alpha_data, underage_data=underage_data, overage_data=overage_data, trials=trials, dataset_id=dataset_id, path=save_path)
+        print("soa_xgb_complex done: ", dataset_id)
     except Exception as e:
         print("Error in soa_xgb_complex", e)
 
-    """
     try:
         ets_baseline(y_train=y_train, y_val=y_val, y_test=y_test, underage_data=underage_data, overage_data=overage_data, alpha_data=alpha_data, 
                     fit_past=27*7, dataset_id=dataset_id, path=save_path)
+        print("ets_baseline done: ", dataset_id)
     except Exception as e:
         print("Error in ets_baseline", e)
-    """
 
 
 if __name__ == "__main__":
-    
+
+    import sys
+
+    # Check if the dataset_id is passed to the script
+    if len(sys.argv) > 1:
+        dataset_id = sys.argv[1]
+    else:
+        print("No dataset_id provided")
+        sys.exit(1)  # Exit the script if no dataset_id is provided
+        
     create_environment()
-    main()
-    
+    main(dataset_id)

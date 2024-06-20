@@ -89,8 +89,13 @@ def load_generated_data(path:str, multi:bool=True):
     raw_data : pd.dataframe
     """ 
     # Load Data
-    with open(path, 'rb') as file:
-        X_train, y_train, X_val, y_val, X_test, y_test = pickle.load(file)
+    with h5py.File(path, 'r') as file:
+        X_train = file['X_train'][:]
+        y_train = file['y_train'][:]
+        X_val = file['X_val'][:]
+        y_val = file['y_val'][:]
+        X_test = file['X_test'][:]
+        y_test = file['y_test'][:]
     
     if multi == False:
         y_train = y_train[:,0]
@@ -843,11 +848,10 @@ def create_NN_model(n_hidden:int, n_neurons:int, activation:str, input_shape:int
     model.compile(loss=custom_loss, optimizer=optimizer, metrics=None)
     return model
 
-def tune_NN_model_optuna(file_path:str, input_shape:int, output_shape:int, val_size:int, integrated:bool, patience:int=10, 
-                         verbose:int=0, trials:int=100, seed:int=42, threads:int=40):
-        
+def tune_NN_model_optuna(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, integrated:bool, patience:int=10, 
+                         verbose:int=0, trials:int=100, seed:int=42, threads:int=40): 
     """
-        X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, integrated:bool, patience:int=10, 
+        file_path:str, input_shape:int, output_shape:int, val_size:int, integrated:bool, patience:int=10, 
                          verbose:int=0, trials:int=100, seed:int=42, threads:int=40):
      Tune a neural network model on the given training data with early stopping using Optuna.
     
@@ -873,6 +877,8 @@ def tune_NN_model_optuna(file_path:str, input_shape:int, output_shape:int, val_s
         Best profit found by Optuna
     """
     global alpha, underage, overage
+    input_shape = X_train.shape[1]
+    output_shape = y_train.shape[1]
 
     # set seed for reproducability
     tf.random.set_seed(seed)
@@ -915,24 +921,25 @@ def tune_NN_model_optuna(file_path:str, input_shape:int, output_shape:int, val_s
             raise ValueError('Invalid Configuration')
         
         # Create the generators
-        train_generator = HDF5DataGenerator(file_path, 'X_train', 'y_train', batch_size=batch_size)
-        val_generator = HDF5DataGenerator(file_path, 'X_val', 'y_val', batch_size=batch_size)
+        #train_generator = HDF5DataGenerator(file_path, 'X_train', 'y_train', batch_size=batch_size)
+        #val_generator = HDF5DataGenerator(file_path, 'X_val', 'y_val', batch_size=batch_size)
         
         #pruning_callback = KerasPruningCallback(trial, 'val_loss')
-        model_ANN.fit(train_generator, validation_data=val_generator,  epochs=epochs, batch_size=batch_size, verbose=verbose, callbacks=[pruning_callback])
+        model_ANN.fit(X_train, y_train, validation_data=(X_val, y_val),  epochs=epochs, batch_size=batch_size, verbose=verbose, callbacks=[pruning_callback])
         
         # Create another generator for prediction
-        pred_generator = HDF5DataGenerator(file_path, 'X_val', 'y_val', batch_size=batch_size)
+        #pred_generator = HDF5DataGenerator(file_path, 'X_val', 'y_val', batch_size=batch_size)
 
         # Make predictions on validation set and compute profits
-        q_val = model_ANN.predict_generator(pred_generator, steps=val_size//batch_size)
+        #q_val = model_ANN.predict_generator(pred_generator, steps=val_size//batch_size)
+        q_val = model_ANN.predict(X_val)
 
         # If integrated, we can use the profit function, 
         #       otherwise we use the negative absolute error (otherwise we would "cheat")
         if integrated:
-            result = np.mean(nvps_profit(pred_generator.get_labels(), q_val))
+            result = np.mean(nvps_profit(y_val, q_val))
         else:
-            result = -np.abs(np.mean(q_val-pred_generator.get_labels()))
+            result = -np.abs(np.mean(q_val-y_val))
 
         return result
 
@@ -944,12 +951,14 @@ def tune_NN_model_optuna(file_path:str, input_shape:int, output_shape:int, val_s
     best_params = study.best_params
     hyperparameter = [best_params['n_hidden'], best_params['n_neurons'],best_params['learning_rate'], 
                     best_params['epochs'], patience, best_params['batch_size'], best_params['activation']]
-    best_estimator = train_NN_model(hp=hyperparameter,file_path=file_path, input_shape=input_shape, output_shape=output_shape, integrated=integrated,verbose=verbose)
+    best_estimator = train_NN_model(hp=hyperparameter,X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=integrated,verbose=verbose)
     
     return best_estimator, hyperparameter, study.best_value
 
-def train_NN_model(hp:list, file_path:str, input_shape:int, output_shape:int, integrated:bool, verbose:int=0):
-    """ Train a network on the given training data with early stopping.
+def train_NN_model(hp:list, X_train, y_train, X_val, y_val, integrated:bool, verbose:int=0):
+    """ file_path:str, input_shape:int, output_shape:int,
+    
+    Train a network on the given training data with early stopping.
     
     Parameters
     --------------
@@ -970,6 +979,8 @@ def train_NN_model(hp:list, file_path:str, input_shape:int, output_shape:int, in
     np.random.seed(42)
 
     global alpha, underage, overage
+    input_shape = X_train.shape[1]
+    output_shape = y_train.shape[1]
 
     # construct loss function based on the number of products
     if  integrated == False:
@@ -989,10 +1000,10 @@ def train_NN_model(hp:list, file_path:str, input_shape:int, output_shape:int, in
     callback = EarlyStopping(monitor='val_loss', patience=patience)
 
     # Create the generators
-    train_generator = HDF5DataGenerator(file_path, 'X_train', 'y_train', batch_size=batch_size)
-    val_generator = HDF5DataGenerator(file_path, 'X_val', 'y_val', batch_size=batch_size)
+    #train_generator = HDF5DataGenerator(file_path, 'X_train', 'y_train', batch_size=batch_size)
+    #val_generator = HDF5DataGenerator(file_path, 'X_val', 'y_val', batch_size=batch_size)
 
-    mlp.fit(train_generator, epochs=max_epochs, batch_size=batch_size, validation_data=val_generator,
+    mlp.fit(X_train, y_train, epochs=max_epochs, batch_size=batch_size, validation_data=(X_val, y_val),
             verbose=verbose, callbacks=[callback])
     
     return mlp
@@ -1095,8 +1106,8 @@ def tune_XGB_model(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
                 evals=[(dval, "val")],
                 evals_result=results,
                 early_stopping_rounds=patience,
-                verbose_eval=verbose,
-                callbacks=[XGBoostPruningCallback(trial, "val-rmse")]         
+                verbose_eval=verbose
+                         
             )
         # if no custom objective is used, we can use the default objective
         else:
@@ -1117,8 +1128,7 @@ def tune_XGB_model(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
                 evals=[(dval, "val")],
                 evals_result=results,
                 early_stopping_rounds=patience,
-                verbose_eval=verbose,
-                callbacks=[XGBoostPruningCallback(trial, "val-rmse")]
+                verbose_eval=verbose
             )
     
         # make predictions on validation set and compute profits
@@ -1213,7 +1223,7 @@ def train_XGB_model(hyperparameter:dict, X_train:np.array, y_train:np.array, X_v
 
 ############################################################### Approach Handler ########################################################
 
-def ioa_ann_simple(file_path:str, input_shape:int, val_size:int, X_test:np.array, y_test:np.array, 
+def ioa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array,  X_test:np.array, y_test:np.array, 
                    underage_data_single:np.array, overage_data_single:np.array, trials:int, dataset_id:str, path:str):
     """ Train and evaluate the integrated optimization approach with a simple ANN model and saves model, hyperparameters and profit
 
@@ -1238,7 +1248,7 @@ def ioa_ann_simple(file_path:str, input_shape:int, val_size:int, X_test:np.array
     # Integrated Optimization Approach - ANN - simple:
     load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single) # Initialize the cost structure
     # Tune the ANN model with Optuna
-    model_ANN_simple, hyperparameter, val_profit = tune_NN_model_optuna(file_path=file_path, input_shape=input_shape, output_shape=1, val_size=val_size, integrated=True, trials=trials)
+    model_ANN_simple, hyperparameter, val_profit = tune_NN_model_optuna(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=True, trials=trials)
     # Make predictions on the test set
     target_prediction_ANN = model_ANN_simple.predict(X_test)
     # Calculate the profit of the predictions
@@ -1348,7 +1358,7 @@ def ioa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     load_cost_structure(alpha_input=None, underage_input=underage_data_single, overage_input=overage_data_single) # Initialize the cost structure
     # Tune the XGBoost model with Optuna
     xgb_model, params, results = tune_XGB_model(X_train=X_train, y_train=y_train, X_val=X_val, y_val=y_val, integrated=True, trials=trials)
-    # Make predictions on the test set
+    # Make predictions on the test set  
     xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
     # Calculate the profit of the predictions
     profit_simple_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result))

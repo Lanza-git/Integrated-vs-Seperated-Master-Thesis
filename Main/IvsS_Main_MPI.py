@@ -30,10 +30,9 @@ load_packages()
 import numpy as np
 
 # custom functions and constants
-from IvsS_Utils import load_data, preprocess_data, split_data, nvps_profit, solve_MILP, create_environment
-from IvsS_Utils import train_NN_model, tune_NN_model_optuna, solve_basic_newsvendor_seperate, solve_complex_newsvendor_seperate
+from IvsS_Utils import load_generated_data, preprocess_data, split_data,  create_environment
 from IvsS_Utils import ets_forecast, ets_evaluate
-from IvsS_Utils import tune_XGB_model, ets_baseline
+from IvsS_Utils import tune_XGB_model, ets_baseline, load_dict
 from IvsS_Utils import soa_ann_complex, soa_ann_simple, soa_xgb_complex, soa_xgb_simple
 from IvsS_Utils import ioa_ann_complex, ioa_ann_simple, ioa_xgb_complex, ioa_xgb_simple
 
@@ -65,9 +64,8 @@ alpha_data = np.array([             #alpha data
 
 ####################################### Functions ##############################################################################
 
-def main(path):
+def main():
     from mpi4py import MPI
-    import pickle
     import xgboost as xgb
     # Initialize the MPI communicator
     comm = MPI.COMM_WORLD
@@ -77,16 +75,28 @@ def main(path):
     rank = comm.Get_rank()
 
     trials = 100
-    dataset_id = 0
-    final_path = "/pfs/data5/home/ma/ma_ma/ma_elanza/test_dir/Results_test/"
+    path = "/pfs/work7/workspace/scratch/ma_elanza-thesislanza/"
+    # Load the dictionary for the datasets
+    dataset_dict = load_dict(path=path)
+
+    i = 3
+    final_path =dataset_dict[i]['folder_path']
+    path = dataset_dict[i]['dataset_path']
+    dataset_id = dataset_dict[i]['dataset_id']
+
+    # Define the message
     massage = str(rank)
 
     # Depending on the rank of the process, run a different approach
     if rank < 2:
-        # Load single Data
-        single_data = load_data(path, False)
-        single_feature_data, single_target_data = preprocess_data(single_data)
-        X_train, y_train, X_val, y_val, X_test, y_test = split_data(single_feature_data, single_target_data)
+        # Simple
+        X_train, y_train, X_val, y_val, X_test, y_test = load_generated_data(path=path, multi=False)
+        # Reshape y_train
+        y_train = y_train.reshape(y_train.shape[0],1)
+        y_val = y_val.reshape(y_val.shape[0],1)
+        y_test = y_test.reshape(y_test.shape[0],1)
+        print("X train shape", X_train.shape)
+        print("y train shape", y_train.shape)
 
         if rank == 0: 
             # Integrated Optimization Approach - ANN - simple:
@@ -117,10 +127,10 @@ def main(path):
             message = "soa_xgb_simple = Complete"
 
     elif rank >= 4:
-        # Load multi Data
-        multi_data = load_data(path, True)
-        multi_feature_data, multi_target_data = preprocess_data(multi_data)
-        X_train, y_train, X_val, y_val, X_test, y_test = split_data(multi_feature_data, multi_target_data)
+        # Complex  
+        X_train, y_train, X_val, y_val, X_test, y_test = load_generated_data(path=path, multi=True)
+        print("X train shape", X_train.shape)
+        print("y train shape", y_train.shape)
 
         if rank == 4:
             
@@ -177,9 +187,7 @@ if __name__ == "__main__":
     
     create_environment()
 
-    path = "/pfs/data5/home/ma/ma_ma/ma_elanza/test_dir/data.csv"
-
-    main(path)
+    main()
 
     import pickle
 

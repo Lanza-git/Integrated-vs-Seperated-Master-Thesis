@@ -57,6 +57,7 @@ def split_data(feature_data, target_data,data_size, test_size=1000, val_size=0.2
     # First, split the data into training+validation set and test set
     X_train_val, X_test, y_train_val, y_test = train_test_split(feature_data, target_data, test_size=test_size, shuffle=False)
 
+    # Select the last data_size elements for training and validation
     X_train_val = X_train_val[-data_size:]
     y_train_val = y_train_val[-data_size:]
 
