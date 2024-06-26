@@ -223,101 +223,7 @@ def split_data(feature_data, target_data, test_size=0.2, val_size=0.2):
 
     return X_train, y_train, X_val, y_val, X_test, y_test
 
-######################### Newsvendor related Functions ########################################################
-
-
-def is_feasible(q, d, alpha, M):
-    """
-    Check if the point q satisfies the constraints in the MILP.
-    """
-    n_prods = q.shape[0]
-    hist = d.shape[0]
-    
-    for i in range(n_prods):
-        for t in range(hist):
-            y_t_i = q[i] - d[t, i] - np.sum(alpha[:, i] * np.maximum(d[t, :] - q, 0))
-            v_t_i = np.maximum(d[t, i] - q[i], 0)
-            z_t_i = 0 if q[i] < d[t,i] else 1
-            
-            # Constraints
-            if not (y_t_i >= 0):
-                return False
-            if not (v_t_i <= d[t, i] - q[i] + M[i] * z_t_i):
-                return False
-            if not (v_t_i >= d[t, i] - q[i] - M[i] * z_t_i):
-                return False
-            if not (v_t_i <= d[t, i] * (1 - z_t_i)):
-                return False
-    return True
-
-def monte_carlo_feasible_region_size(d, lower_bound_value, upper_bound_value, num_samples=100000):
-    """
-    Estimate the size of the feasible region using Monte Carlo sampling
-    
-    Parameters:
-    d (numpy.ndarray): Demand samples of shape (n, N_PRODUCTS)
-    alpha (numpy.ndarray): Substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
-    u (numpy.ndarray): Underage costs, shape (1, N_PRODUCTS)
-    o (numpy.ndarray): Overage costs, shape (1, N_PRODUCTS)
-    lower_bounds (numpy.ndarray): Lower bounds of the order quantities
-    upper_bounds (numpy.ndarray): Upper bounds of the order quantities
-    num_samples (int): Number of random samples to generate
-    
-    Returns:
-    float: Estimated size of the feasible region
-    """
-    global alpha, underage, overage
-    n_prods = d.shape[1]
-    lower_bounds = np.full(n_prods, lower_bound_value)
-    upper_bounds = np.full(n_prods, upper_bound_value)  
-    M = (np.max(d + np.matmul(d, alpha), axis=0) - np.min(d, axis=0))
-    feasible_count = 0
-    
-    for _ in range(num_samples):
-        # Generate a random point within the variable bounds
-        q = np.random.randint(lower_bounds, upper_bounds + 1, n_prods)
-        
-        # Check if the point is feasible
-        if is_feasible(q, d, alpha, M):
-            feasible_count += 1
-    
-    # Estimate the proportion of feasible points
-    proportion_feasible = feasible_count / num_samples
-    total_region_size = np.prod(upper_bounds) - np.prod(lower_bounds)
-    feasible_region_size = proportion_feasible * total_region_size
-    
-    return feasible_region_size
-
-def calculate_saa_size(y_train:np.array, desired_accuracy:float=0.05, acceptable_deviation:float=0.01, confidence_level:float=0.95):
-    """ Calculate the sample size for the sample average approximation (SAA) method
-
-    based on: "The Data-Driven Newsvendor Problem: New Bounds and Insights" by Retsef Levi, Joline Uichanco, and Georgia Perakis
-
-    Parameters
-    ---------
-    y_train : np.array
-        Demand data for training, shape (T, N_PRODUCTS)
-    desired_accuracy: float
-        Desired accuracy of the SAA method
-    acceptable_deviation: float
-        Tolerated deviation from the true optimal solution
-    feasible_region_size: float
-        Feasible region size of the optimal solution
-    confidence_level: float
-        Confidence level of the SAA method    
-
-    Returns
-    ---------
-    saa_size : int
-        Sample size for the SAA method
-    """
-    variance = np.var(y_train)
-    feasible_region_size = monte_carlo_feasible_region_size(d=y_train, lower_bound_value=20, upper_bound_value=80)
-    print(variance)
-    print(feasible_region_size)
-    sample_size = ((3 * (variance ** 2))/((desired_accuracy-acceptable_deviation)**2))* math.log(feasible_region_size/(1-confidence_level))
-    print(sample_size)
-    return sample_size
+######################### Newsvendor related Functions ####################################################################
 
 def load_cost_structure(alpha_input:np.array, underage_input:np.array, overage_input:np.array):
     """ Initialize the cost structure for the newsvendor problem"""
@@ -333,9 +239,6 @@ def nvps_profit(demand:np.array, q:np.array):
     ---------
     demand : actual demand, shape (T, N_PRODUCTS)
     q : predicted orders, shape (T, N_PRODUCTS)
-    alpha: substitution rates, shape (N_PRODUCTS, N_PRODUCTS)
-    u : underage costs, shape (1, N_PRODUCTS)
-    o : overage costs, shape (1, N_PRODUCTS)
 
     Returns
     ---------
@@ -343,6 +246,16 @@ def nvps_profit(demand:np.array, q:np.array):
         Profits by period, shape (T,1)
     """
     global alpha, underage, overage
+
+    # Check if the array is 1D
+    if demand.ndim == 1:
+        # Reshape the array to have shape (n, 1)
+        demand = demand.reshape(-1, 1)
+    # Check if the array is 1D
+    q = np.array(q,copy=False)
+    if q.ndim == 1:
+        q = q.reshape(-1, 1)# Reshape the array to have shape (n, 1)
+
     if demand.shape[1] == 1:
         q = np.maximum(0., q)
         if len(q.shape) == 1:
@@ -351,7 +264,7 @@ def nvps_profit(demand:np.array, q:np.array):
     else:
         q = np.maximum(0., q) # make sure orders are non-negative
         demand_s = demand + np.matmul(np.maximum(demand-q, 0.), alpha) # demand including substitutions
-        profits = np.matmul(q, underage) - np.matmul(np.maximum(q-demand_s, 0.), (underage+overage)) # period-wise profit (T x 1)
+        profits = np.sum(np.matmul(q, underage) - np.matmul(np.maximum(q-demand_s, 0.), (underage+overage))) # period-wise profit (T x 1)
     return profits
 
 def solve_MILP(d:np.array, n_threads:int=40):
@@ -468,17 +381,21 @@ def solve_complex_parametric_seperate(y_train:np.array, y_train_pred:np.array, y
         # For each demand scenario, solve the newsvendor problem
         for demand in demand_scenarios_parametric:
             # Calculate the solution for this scenario
-            demand = demand.reshape(1,-1) # (1,n)
+            demand = demand.reshape(1,-1)
             solution, status = solve_MILP(d=demand, n_threads=n_threads)
+            # Ensure solution is of shape (6,)
+            solution = np.squeeze(solution)  # This changes shape from (1, 6) to (6,)
             # Store the solution for this scenario
             saa_solutions_p.append(solution)
 
+        saa_solutions_p = np.array(saa_solutions_p)
         # Average the solutions to get the final allocation
         final_allocation_p = np.mean(saa_solutions_p, axis=0)
 
         # Store the final order quantities
         final_order_quantities_parametric.append(final_allocation_p)
 
+    final_order_quantities_parametric = np.array(final_order_quantities_parametric)
     return final_order_quantities_parametric
 
 def solve_complex_non_parametric_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=100, n_threads:int=40):
@@ -525,14 +442,18 @@ def solve_complex_non_parametric_seperate(y_train:np.array, y_train_pred:np.arra
             # Calculate the solution for this scenario
             demand = demand.reshape(1,-1)
             solution, status = solve_MILP(d=demand, n_threads=n_threads)
+            # Ensure solution is of shape (6,)
+            solution = np.squeeze(solution)  # This changes shape from (1, 6) to (6,)
             # Store the solution for this scenario
             saa_solutions_np.append(solution)
 
+        saa_solutions_np = np.array(saa_solutions_np)
         # Average the solutions to get the final allocation
         final_allocation_np = np.mean(saa_solutions_np, axis=0)
         # Store the final order quantities
         final_order_quantities_non_parametric.append(final_allocation_np)
 
+    final_order_quantities_non_parametric = np.array(final_order_quantities_non_parametric)
     return final_order_quantities_non_parametric
 
 def solve_basic_parametric_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=10, n_threads:int=40):
@@ -1252,7 +1173,7 @@ def ioa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     # Make predictions on the test set
     target_prediction_ANN = model_ANN_simple.predict(X_test)
     # Calculate the profit of the predictions
-    profit_simple_ANN_IOA = np.mean(nvps_profit(demand=y_test, q=target_prediction_ANN))
+    profit_simple_ANN_IOA = nvps_profit(demand=y_test, q=target_prediction_ANN)
 
     # Measure memory usage and elapsed time
     monitor.stop() # stop the average memory monitor
@@ -1305,7 +1226,7 @@ def soa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
 
     # Calculate the orders and profits in a parametric way
     orders_ssp_ann = solve_basic_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
-    profit_ssp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_ssp_ann))
+    profit_ssp_ANN = nvps_profit(demand=y_test, q=orders_ssp_ann)
 
     # Measure memory usage and elapsed time for parametric optimization
     monitor_2.stop() # stop the average memory monitor for the parametric optimization
@@ -1314,7 +1235,7 @@ def soa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
 
     # Calculate the orders and profits in a non-parametric way
     orders_ssnp_ann = solve_basic_non_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
-    profit_ssnp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_ssnp_ann))
+    profit_ssnp_ANN = nvps_profit(demand=y_test, q=orders_ssnp_ann)
 
     # Measure memory usage and elapsed time for non-parametric optimization
     monitor_3.stop() # stop the average memory monitor for the non-parametric optimization
@@ -1361,7 +1282,7 @@ def ioa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     # Make predictions on the test set  
     xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
     # Calculate the profit of the predictions
-    profit_simple_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result))
+    profit_simple_XGB_IOA = nvps_profit(demand=y_test, q=xgb_result)
 
     # Measure memory usage and elapsed time
     monitor.stop() # stop the average memory monitor
@@ -1411,7 +1332,7 @@ def soa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
 
     # Calculate the orders and profits in a parametric way
     orders_ssp_xgb = solve_basic_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
-    profit_ssp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_ssp_xgb))
+    profit_ssp_XGB = nvps_profit(demand=y_test, q=orders_ssp_xgb)
 
     # Measure memory usage and elapsed time for parametric optimization
     monitor_2.stop() # stop the average memory monitor for the parametric optimization
@@ -1420,7 +1341,7 @@ def soa_xgb_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
 
     # Calculate the orders and profits in a non-parametric way
     orders_ssnp_xgb = solve_basic_non_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
-    profit_ssnp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_ssnp_xgb))
+    profit_ssnp_XGB = nvps_profit(demand=y_test, q=orders_ssnp_xgb)
 
     # Measure memory usage and elapsed time for non-parametric optimization
     monitor_3.stop() # stop the average memory monitor for the non-parametric optimization
@@ -1468,7 +1389,7 @@ def ioa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     # Make predictions on the test set
     target_prediction_ANN = model_ANN_complex.predict(X_test)
     # Calculate the profit of the predictions
-    profit_complex_ANN_IOA = np.mean(nvps_profit(demand=y_test, q=target_prediction_ANN))
+    profit_complex_ANN_IOA = nvps_profit(demand=y_test, q=target_prediction_ANN)
 
     # Measure memory usage and elapsed time
     monitor.stop() # stop the average memory monitor
@@ -1520,7 +1441,7 @@ def soa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
 
     # Calculate the orders and profits in a parametric way
     orders_scp_ann = solve_complex_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
-    profit_scp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_scp_ann))
+    profit_scp_ANN = nvps_profit(demand=y_test, q=orders_scp_ann)
 
     # Measure memory usage and elapsed time for parametric optimization
     monitor_2.stop() # stop the average memory monitor for the parametric optimization
@@ -1529,7 +1450,7 @@ def soa_ann_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
 
     # Calculate the orders and profits in a non-parametric way
     orders_scnp_ann = solve_complex_non_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_ANN, y_test_pred=target_prediction_ANN)
-    profit_scnp_ANN = np.mean(nvps_profit(demand=y_test, q=orders_scnp_ann))
+    profit_scnp_ANN = nvps_profit(demand=y_test, q=orders_scnp_ann)
 
     # Measure memory usage and elapsed time for non-parametric optimization
     monitor_3.stop() # stop the average memory monitor for the non-parametric optimization
@@ -1577,7 +1498,7 @@ def ioa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     # Make predictions on the test set
     xgb_result = xgb_model.predict(xgb.DMatrix(X_test))
     # Calculate the profit of the predictions
-    profit_complex_XGB_IOA = np.mean(nvps_profit(demand=y_test, q=xgb_result))   
+    profit_complex_XGB_IOA = nvps_profit(demand=y_test, q=xgb_result) 
 
     # Measure memory usage and elapsed time
     monitor.stop() # stop the average memory monitor
@@ -1629,7 +1550,7 @@ def soa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
 
     # Calculate the orders and profits in a parametric way
     orders_scp_xgb = solve_complex_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
-    profit_scp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_scp_xgb))
+    profit_scp_XGB = nvps_profit(demand=y_test, q=orders_scp_xgb)
 
     # Measure memory usage and elapsed time for parametric optimization
     monitor_2.stop() # stop the average memory monitor for the parametric optimization
@@ -1638,7 +1559,7 @@ def soa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
 
     # Calculate the orders and profits in a non-parametric way
     orders_scnp_xgb = solve_complex_non_parametric_seperate(y_train=y_train, y_train_pred=train_prediction_XGB, y_test_pred=target_prediction_XGB)
-    profit_scnp_XGB = np.mean(nvps_profit(demand=y_test, q=orders_scnp_xgb))
+    profit_scnp_XGB = nvps_profit(demand=y_test, q=orders_scnp_xgb)
 
     # Measure memory usage and elapsed time for non-parametric optimization
     monitor_3.stop() # stop the average memory monitor for the non-parametric optimization

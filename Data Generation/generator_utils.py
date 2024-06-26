@@ -376,7 +376,7 @@ def add_heterogenity(data:np.array, factor:float):
 
     # Multiply the datapoints with the factor
     for i in range(data_size):
-        if hetero_bool[i,1] == 1:
+        if hetero_bool[i] == 1:
             data[i,:] = data[i,:] * (10*factor)
         
     return data, hetero_bool
@@ -454,7 +454,7 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
     # Handle additional Features
     if feature_use == True:
         # Add L additional copies of the orignial features, that have add each time a bit more info
-        X = pd.DataFrame(add_dimensions(data=X, L=(feature_size/3)))
+        X = add_dimensions(data=X, L=int(feature_size/3))
         # Drop the original features
         X = X[:,3:]
     elif feature_use == False and feature_size > dimensions:
@@ -502,11 +502,17 @@ if __name__ == "__main__":
 
     dataset_list = []
 
+    # Try to load existing data
+    dataset_file = save_path + "/dataset_list.pkl"
+    if os.path.exists(dataset_file):
+        with open(dataset_file, 'rb') as f:
+            dataset_list = pickle.load(f)
+
     # Create data for different sizes (10 - 1.000.000)
     for i in range(1, 7):
-        dataset_dict = generate_data(data_size=(10**i), feature_size=3, feature_use=False, target_size=6, volatility=0.05, heterogenity=0, path=save_path)
+        dataset_dict = generate_data(data_size=(10**4), feature_size=(3*(2**i)), feature_use=False, target_size=6, volatility=0.05, heterogenity=0, path=save_path)
         dataset_list.append(dataset_dict)
 
-    with open(save_path + "/dataset_list.pkl", 'wb') as f:
-        pickle.dump(dataset_list,f)
-
+    # Write the updated list back to the file
+    with open(dataset_file, 'wb') as f:
+        pickle.dump(dataset_list, f)
