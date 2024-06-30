@@ -84,7 +84,7 @@ def main(dataset_id):
     
 def run(path, trials, dataset_id, save_path):
     
-    """
+     
     # Simple
     X_train_single, y_train_single, X_val_single, y_val_single, X_test_single, y_test_single = load_generated_data(path=path, multi=False)
     # Reshape y_train
@@ -97,23 +97,24 @@ def run(path, trials, dataset_id, save_path):
     ioa_ann_simple(X_train=X_train_single, y_train=y_train_single, X_val=X_val_single, y_val=y_val_single, X_test=X_test_single, y_test=y_test_single, 
                 underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
     print("ioa_ann_simple done: ", dataset_id)
-
+    
     soa_ann_simple(X_train=X_train_single, y_train=y_train_single, X_val=X_val_single, y_val=y_val_single, X_test=X_test_single, y_test=y_test_single, 
                     underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
     print("soa_ann_simple done: ", dataset_id)
 
-    print("ioa_xgb_simple")
+    
     ioa_xgb_simple(X_train=X_train_single, y_train=y_train_single, X_val=X_val_single, y_val=y_val_single, X_test=X_test_single, y_test=y_test_single, 
                 underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
     print("ioa_xgb_simple done: ", dataset_id)
-
+    
     soa_xgb_simple(X_train=X_train_single, y_train=y_train_single, X_val=X_val_single, y_val=y_val_single, X_test=X_test_single, y_test=y_test_single, 
                 underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
     print("soa_xgb_simple done: ", dataset_id)
 
     # Drop unneeded variables
     del X_train_single, y_train_single, X_val_single, y_val_single, X_test_single, y_test_single
-    """
+    
+    
     # Complex  
     X_train_multi, y_train_multi, X_val_multi, y_val_multi, X_test_multi, y_test_multi = load_generated_data(path=path, multi=True)
     print("X train shape", X_train_multi.shape)
@@ -135,7 +136,6 @@ def run(path, trials, dataset_id, save_path):
         print("Error in soa_ann_complex", e)
     
     try:
-        print("ioa_xgb_complex")
         ioa_xgb_complex(X_train=X_train_multi, y_train=y_train_multi, X_val=X_val_multi, y_val=y_val_multi, X_test=X_test_multi, y_test=y_test_multi,
                     alpha_data=alpha_data, underage_data=underage_data, overage_data=overage_data, trials=trials, dataset_id=dataset_id, path=save_path)
         print("ioa_xgb_complex done: ", dataset_id)
@@ -148,6 +148,7 @@ def run(path, trials, dataset_id, save_path):
         print("soa_xgb_complex done: ", dataset_id)
     except Exception as e:
         print("Error in soa_xgb_complex", e)
+    
     """
     try:
         ets_baseline(y_train=y_train, y_val=y_val, y_test=y_test, underage_data=underage_data, overage_data=overage_data, alpha_data=alpha_data, 

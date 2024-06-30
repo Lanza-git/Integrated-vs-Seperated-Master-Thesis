@@ -682,8 +682,8 @@ def ets_evaluate(y_test:np.array, results_dct:dict):
     y_test_single = y_test[:,0].reshape(-1, 1)
     test_pred_single = test_pred[:,0].reshape(-1, 1)
 
-    profit_ets_single = np.mean(nvps_profit(y_test_single, test_pred_single, None,  underage[0,0],  overage[0,0]))
-    profit_ets_multi = np.mean(nvps_profit(y_test, test_pred,  alpha,  underage,  overage))
+    profit_ets_single = np.mean(nvps_profit(y_test_single, test_pred_single ))
+    profit_ets_multi = np.mean(nvps_profit(y_test, test_pred))
 
     return  profit_ets_single, profit_ets_multi
 
@@ -812,9 +812,9 @@ def tune_NN_model_optuna(X_train:np.array, y_train:np.array, X_val:np.array, y_v
         pruning_callback = KerasPruningCallback(trial, 'val_loss')
 
         # define the hyperparameters space
-        n_hidden = trial.suggest_int('n_hidden', 0, 10)
+        n_hidden = trial.suggest_int('n_hidden', 0, 15) # changed from 10 to 15
         n_neurons = trial.suggest_int('n_neurons', 1, 30)
-        learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-1, log=True)
+        learning_rate = trial.suggest_float('learning_rate', 1e-5, 1, log=True) # changed from 1e-1 to 1
         batch_size = trial.suggest_categorical('batch_size', [16, 32, 64, 128])
         epochs = trial.suggest_int('epochs', 10, 50)
         activation = trial.suggest_categorical('activation', ['relu', 'sigmoid', 'tanh'])
@@ -1014,9 +1014,9 @@ def tune_XGB_model(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
                 "tree_method": "hist",
                 "num_target": y.shape[1],
                 "multi_strategy": multi_strategy,
-                "learning_rate": trial.suggest_float("learning_rate", 0.1, 0.5),
-                "max_depth": trial.suggest_int("max_depth", 2, 6),
-                "subsample": trial.suggest_float("subsample", 0.3, 0.9),
+                "learning_rate": trial.suggest_float("learning_rate", 0.1, 1), # changed from 0.5 to 1
+                "max_depth": trial.suggest_int("max_depth", 2, 9),  # changed from 6 to 9
+                "subsample": trial.suggest_float("subsample", 0.3, 1), # changed from 0.9 to 1
                 "quantile_alpha": quantile,
                 "objective": custom_objective,
             }

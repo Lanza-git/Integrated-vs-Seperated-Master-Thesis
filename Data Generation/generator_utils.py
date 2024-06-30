@@ -62,7 +62,7 @@ def split_data(feature_data, target_data,data_size, test_size=1000, val_size=0.2
     y_train_val = y_train_val[-data_size:]
 
     # Then, split the training+validation set into training set and validation set
-    X_train, X_val, y_train, y_val = train_test_split(X_train_val, y_train_val, test_size=val_size)
+    X_train, X_val, y_train, y_val = train_test_split(X_train_val, y_train_val, test_size=val_size, random_state=42)
 
     return X_train, y_train, X_val, y_val, X_test, y_test
 
@@ -101,6 +101,7 @@ def generate_phi(num_dimensions=3, factor=1):
     ])
 
     # Extend base matrices to num_dimensions with small random values for new dimensions
+    np.random.seed(42)
     Phi1 = np.random.randn(num_dimensions, num_dimensions) * 0.01
     Phi2 = np.random.randn(num_dimensions, num_dimensions) * 0.01
 
@@ -142,6 +143,7 @@ def generate_theta(num_dimensions=3, factor=1):
     ])
 
     # Extend base matrices to num_dimensions with small random values for new dimensions
+    np.random.seed(42)
     Theta1 = np.random.randn(num_dimensions, num_dimensions) * 0.01
     Theta2 = np.random.randn(num_dimensions, num_dimensions) * 0.01
 
@@ -351,7 +353,7 @@ def add_noise_features(data, amount=1):
     
     return expanded_data
 
-def add_heterogenity(data:np.array, factor:float):
+def add_heterogenity(data:np.array, factor:float, percentage:float):
     """ Add heterogenity to the dataset by multiplying a random subset of the data with a factor
 
     Parameters:
@@ -372,12 +374,12 @@ def add_heterogenity(data:np.array, factor:float):
     np.random.seed(42) # set seed for reproducibility
     
     # Create Boolean array to indicate which datapoints are multiplied with the factor
-    hetero_bool = np.random.choice([0, 1], size=(data_size, 1), p=[(1-factor), factor]) 
+    hetero_bool = np.random.choice([0, 1], size=(data_size, 1), p=[(1-percentage), percentage]) 
 
     # Multiply the datapoints with the factor
     for i in range(data_size):
         if hetero_bool[i] == 1:
-            data[i,:] = data[i,:] * (10*factor)
+            data[i,:] = data[i,:] * (1+(factor)/10)
         
     return data, hetero_bool
 
@@ -467,7 +469,15 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
 
     # Handle heterogenity and add boolean feature to indicate heterogenity
     if heterogenity > 0:
-        Y, hetero_bool = add_heterogenity(data=Y, factor=heterogenity)
+        match heterogenity:
+            case 0.1: factor = 0.4
+            case 0.2: factor = 0.55
+            case 0.3: factor = 0.6
+            case 0.4: factor = 0.75
+            case 0.5: factor = 1.05
+            case 0.6: factor = 1.5
+        #factor = 0.3 + (heterogenity * 1.5)
+        Y, hetero_bool = add_heterogenity(data=Y, factor=factor, percentage = heterogenity)
         X = np.append(X, hetero_bool, axis=1)
 
     # train, val test split
@@ -510,7 +520,7 @@ if __name__ == "__main__":
 
     # Create data for different sizes (10 - 1.000.000)
     for i in range(1, 7):
-        dataset_dict = generate_data(data_size=(10**4), feature_size=(3*(2**i)), feature_use=False, target_size=6, volatility=0.05, heterogenity=0, path=save_path)
+        dataset_dict = generate_data(data_size=(10**3), feature_size=3, feature_use=False, target_size=6, volatility=(0.05*i), heterogenity=0, path=save_path)
         dataset_list.append(dataset_dict)
 
     # Write the updated list back to the file
