@@ -519,8 +519,8 @@ if __name__ == "__main__":
             dataset_list = pickle.load(f)
 
     # Create data for different sizes (10 - 1.000.000)
-    for i in range(1, 7):
-        dataset_dict = generate_data(data_size=(10**3), feature_size=3, feature_use=False, target_size=6, volatility=(0.05*i), heterogenity=0, path=save_path)
+    for i in range(1, 6):
+        dataset_dict = generate_data(data_size=(10**2), feature_size=3, feature_use=False, target_size=6, volatility=(0.05*i), heterogenity=0, path=save_path)
         dataset_list.append(dataset_dict)
 
     # Write the updated list back to the file

@@ -1633,6 +1633,10 @@ def save_model(model, hyperparameter, profit, elapsed, peak_memory, avg_memory, 
     path : path to save the model
     name : name of the model
     """
+    # Ensure the path exists
+    if not os.path.exists(path):
+        os.makedirs(path)
+
     path = path + "/"
 
     # Create dictionaries to save the model and hyperparameters
