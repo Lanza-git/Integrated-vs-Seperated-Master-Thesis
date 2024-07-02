@@ -284,10 +284,10 @@ def generate_demand(X, n_periods, target_size):
     print(X[0:5,:])
 
     np.random.seed(42)
-    epsilon = np.random.normal(0, 1, (n_periods, target_size))
+    epsilon = np.random.normal(0, 10, (n_periods, target_size))
     # create noise term delta
     np.random.seed(24)
-    delta = np.random.normal(0, 1, (n_periods, 3)) / 4
+    delta = np.random.normal(0, 10, (n_periods, 3)) / 4
     # transform the input features X
     Y = np.maximum(0, (X + delta) @ A.T + (X @ B.T) * epsilon) 
 
@@ -519,8 +519,8 @@ if __name__ == "__main__":
             dataset_list = pickle.load(f)
 
     # Create data for different sizes (10 - 1.000.000)
-    for i in range(1, 6):
-        dataset_dict = generate_data(data_size=(10**2), feature_size=3, feature_use=False, target_size=6, volatility=(0.05*i), heterogenity=0, path=save_path)
+    for i in range(1, 7):
+        dataset_dict = generate_data(data_size=(10**i), feature_size=3, feature_use=False, target_size=6, volatility=(0.05), heterogenity=0, path=save_path)
         dataset_list.append(dataset_dict)
 
     # Write the updated list back to the file

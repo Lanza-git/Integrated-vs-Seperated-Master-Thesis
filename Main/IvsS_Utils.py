@@ -247,6 +247,10 @@ def nvps_profit(demand:np.array, q:np.array):
     """
     global alpha, underage, overage
 
+    # Round values
+    demand = np.round(demand, 0)
+    q = np.round(q, 0)
+
     # Check if the array is 1D
     if demand.ndim == 1:
         # Reshape the array to have shape (n, 1)

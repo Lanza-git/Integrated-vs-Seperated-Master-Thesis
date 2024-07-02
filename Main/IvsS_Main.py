@@ -70,11 +70,8 @@ def get_constants(risk_factor):
 def main(dataset_id, risk_factor):
 
     # Path to the dataset
-    path =  "C:/Users/lanza/Master_Thesis_EL/Integrated-vs-Seperated-Master-Thesis/test/"#/pfs/work7/workspace/scratch/ma_elanza-thesislanza/"
+    path =  "/pfs/work7/workspace/scratch/ma_elanza-thesislanza/"
     trials = 100
-
-    dataset_id = "set_130650"
-    risk_factor = 2
     
     # Load the dictionary for the datasets
     dataset_dict = load_dict(path=path)
@@ -85,9 +82,6 @@ def main(dataset_id, risk_factor):
             dataset_path = dataset['dataset_path']
             folder_path = dataset['folder_path']
             break
-
-    dataset_path = "C:/Users/lanza/Master_Thesis_EL/Integrated-vs-Seperated-Master-Thesis/test/set_130650/set_130650_data.h5"
-    folder_path = "C:/Users/lanza/Master_Thesis_EL/Integrated-vs-Seperated-Master-Thesis/test/set_130650/"
 
     if risk_factor != 1:
         folder_path = folder_path + "/risk_" + str(risk_factor)
@@ -187,10 +181,10 @@ if __name__ == "__main__":
     # Check if the dataset_id is passed to the script
     if len(sys.argv) > 1:
         dataset_id = sys.argv[1]
-        risk_factor = sys.argv[2]
+        risk_factor = float(sys.argv[2])
     else:
         print("No dataset_id provided")
-        #sys.exit(1)  # Exit the script if no dataset_id is provided
+        sys.exit(1)  # Exit the script if no dataset_id is provided
 
     create_environment()
-    main(dataset_id=0, risk_factor=0)
+    main(dataset_id, risk_factor)
