@@ -84,7 +84,7 @@ def main(dataset_id, risk_factor):
             break
 
     if risk_factor != 1:
-        folder_path = folder_path + "/risk_" + str(risk_factor)
+        folder_path = folder_path + "/risk_" + str(risk_factor*10)
 
     run(path=dataset_path, trials=trials, dataset_id=dataset_id, save_path=folder_path, risk_factor=risk_factor)
 
