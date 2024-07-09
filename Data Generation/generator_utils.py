@@ -297,7 +297,7 @@ def generate_demand(X, n_periods, target_size):
 
 import numpy as np
 
-def add_dimensions(data, L=1):
+def add_info_features(data, L=1):
     """
     Add 3L dimensions to the dataset by creating L copies of each feature and adding Gaussian noise.
     
@@ -456,7 +456,7 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
     # Handle additional Features
     if feature_use == True:
         # Add L additional copies of the orignial features, that have add each time a bit more info
-        X = add_dimensions(data=X, L=int(feature_size/3))
+        X = add_info_features(data=X, L=int(feature_size/3))
         # Drop the original features
         X = X[:,3:]
     elif feature_use == False and feature_size > dimensions:
@@ -468,8 +468,12 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
     Y = Y[:,3:]
 
     # Handle heterogenity and add boolean feature to indicate heterogenity
+    # Define heterogenity info
+    hetero_info = True
+
+    print(heterogenity)
     if heterogenity > 0:
-        match heterogenity:
+        match round(heterogenity,1):
             case 0.1: factor = 0.4
             case 0.2: factor = 0.55
             case 0.3: factor = 0.6
@@ -478,13 +482,17 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
             case 0.6: factor = 1.5
         #factor = 0.3 + (heterogenity * 1.5)
         Y, hetero_bool = add_heterogenity(data=Y, factor=factor, percentage = heterogenity)
-        X = np.append(X, hetero_bool, axis=1)
+
+        if (hetero_info == True):
+            X = np.append(X, hetero_bool, axis=1)
 
     # train, val test split
     X_train, y_train, X_val, y_val, X_test, y_test = split_data(feature_data=X, target_data=Y, val_size=0.2, test_size=100, data_size=data_size)
 
     # create dataset ID and dir for the data
     dataset_id = "set_" + str(int(math.log10(data_size))) + str(int(feature_size)) + str(int(feature_use)) + str(int(target_size)) + str(int(volatility*100)) + str(int(heterogenity*100))
+    if(hetero_info == False):
+        dataset_id = dataset_id + "no"
     final_path = path +"/"+ dataset_id
     os.makedirs(final_path, exist_ok=True)
 
@@ -519,9 +527,13 @@ if __name__ == "__main__":
             dataset_list = pickle.load(f)
 
     # Create data for different sizes (10 - 1.000.000)
-    for i in range(1, 7):
-        dataset_dict = generate_data(data_size=(10**i), feature_size=3, feature_use=False, target_size=6, volatility=(0.05), heterogenity=0, path=save_path)
+    for i in range(2, 6):
+        dataset_dict = generate_data(data_size=(10**2), feature_size=3 , feature_use=False, target_size=6, volatility=(0.05*i), heterogenity=(0), path=save_path)
         dataset_list.append(dataset_dict)
+
+
+        # Info Features (3* (2**i))     Default 3
+        # Heterogenity (0.1 * i)        Default 0
 
     # Write the updated list back to the file
     with open(dataset_file, 'wb') as f:
