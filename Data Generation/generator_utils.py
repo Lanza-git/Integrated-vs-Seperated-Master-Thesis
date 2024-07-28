@@ -313,12 +313,14 @@ def add_info_features(data, L=1):
 
     # Generate new features by adding Gaussian noise to copies of the original features
     for i in range(L):
-        print(i)
+        
+        i = 64 - i
         # Compute the scale of the noise
-        sigma = (1/2) ** (i+1)  
+        #sigma = (1/2) ** (i)  
+        sigma =  (i/10)
 
         # Add Gaussian noise scaled by sigma to each feature
-        noisy_features = data * sigma+ np.random.normal(0, 1, data.shape) 
+        noisy_features = data +  np.random.normal(-sigma, sigma, data.shape) 
         
         # Place the noisy features in the corresponding columns of the new feature array
         expanded_data = np.append(expanded_data, noisy_features, axis=1)
@@ -379,7 +381,7 @@ def add_heterogenity(data:np.array, factor:float, percentage:float):
     # Multiply the datapoints with the factor
     for i in range(data_size):
         if hetero_bool[i] == 1:
-            data[i,:] = data[i,:] * (1+(factor)/10)
+            data[i,:] = data[i,:] * (1+(factor))#/10)
         
     return data, hetero_bool
 
@@ -516,7 +518,7 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
 
 if __name__ == "__main__":
 
-    save_path = "/pfs/work7/workspace/scratch/ma_elanza-thesislanza"
+    save_path = "/pfs/work7/workspace/scratch/ma_elanza-thesislanza" #"C:/Users/lanza/Master_Thesis_EL/Integrated-vs-Seperated-Master-Thesis/test"
 
     dataset_list = []
 
@@ -527,8 +529,9 @@ if __name__ == "__main__":
             dataset_list = pickle.load(f)
 
     # Create data for different sizes (10 - 1.000.000)
-    for i in range(2, 6):
-        dataset_dict = generate_data(data_size=(10**2), feature_size=3 , feature_use=False, target_size=6, volatility=(0.05*i), heterogenity=(0), path=save_path)
+    for i in range(7):
+        
+        dataset_dict = generate_data(data_size=(10**4), feature_size=3, feature_use=False, target_size=6, volatility=(0.05), heterogenity=0, path=save_path)
         dataset_list.append(dataset_dict)
 
 
