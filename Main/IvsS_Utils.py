@@ -57,7 +57,6 @@ def create_environment():
     
     #os.environ['TF_ENABLE_ONEDNN_OPTS']=0
 
-
 ######################## Data Handling Functions ############################################################
 
 def load_dict(path:str):
@@ -103,28 +102,6 @@ def load_generated_data(path:str, multi:bool=True):
         y_test = y_test[:,0]
 
     return X_train, y_train, X_val, y_val, X_test, y_test
-
-def load_data(path:str, multi:bool=False):
-    """ Load  data for the newsvendor problem from specified location 
-
-    Parameters
-    ---------
-    path : path to the data file
-    multi : if True, all products are considered, if False, only product 1 is considered
-    
-    Returns
-    ---------
-    raw_data : pd.dataframe
-    """ 
-    # Load Data
-    raw_data = pd.read_csv(path)    
-
-    # Select only one product if multi == False
-    if multi == False:
-        # Select only columns with product_1_demand or not demand (features)
-        selected_columns = raw_data.columns[raw_data.columns.str.contains('product_1_demand') | ~raw_data.columns.str.contains('demand')]
-        raw_data = raw_data[selected_columns]
-    return raw_data
 
 def preprocess_data(raw_data:pd.DataFrame):
     """ Preprocess the data for the newsvendor problem
@@ -223,7 +200,55 @@ def split_data(feature_data, target_data, test_size=0.2, val_size=0.2):
 
     return X_train, y_train, X_val, y_val, X_test, y_test
 
-######################### Newsvendor related Functions ####################################################################
+def get_constants(risk_factor):
+    """
+    Constants for the newsvendor problem
+    
+    Parameters
+    ----------
+    risk_factor : float
+        Risk factor for the newsvendor problem
+        
+    Returns
+    -------
+    underage_data : np.array
+        Underage data for the multi-product newsvendor problem
+    overage_data : np.array
+        Overage data for the multi-product newsvendor problem
+    alpha_data : np.array
+        Substituion rates for the multi-product newsvendor problem
+    underage_data_single : float
+        Underage data for the basic newsvendor problem
+    overage_data_single : float
+        Overage data for the basic newsvendor problem"""
+    
+    # Cost parameters for the newsvendor problem
+    prices = np.array([0.3, 0.5, 0.6, 0.5, 0.5, 0.5]) #price data
+    prices = prices.reshape(6,1)
+    costs = np.array([0.06, 0.06, 0.06, 0.06, 0.06, 0.06]) #cost data
+    costs = costs.reshape(6,1)
+    salvages = np.array([0.01, 0.01, 0.01, 0.01, 0.01, 0.01]) #salvage data
+    salvages = salvages.reshape(6,1)
+
+    # Multiplication of costs with risk factor for risk level analysis
+    costs = costs * risk_factor
+
+    # Calculate the underage and overage data
+    underage_data = prices - costs 
+    overage_data = costs - salvages 
+    underage_data_single = underage_data[0,0]
+    overage_data_single = overage_data[0,0]
+
+    # Substition rates for the newsvendor problem
+    alpha_data = np.array([             #alpha data
+        [0.0, 0.11, 0.15, 0.14, 0.14, 0.15],
+        [0.22, 0.0, 0.08, 0.11, 0.12, 0.12],
+        [0.24, 0.07, 0.0, 0.07, 0.08, 0.07],
+        [0.26, 0.09, 0.07, 0.0, 0.12, 0.12],
+        [0.19, 0.10, 0.10, 0.12, 0.0, 0.14],
+        [0.17, 0.13, 0.11, 0.11, 0.13, 0.0]
+    ])
+    return underage_data, overage_data, alpha_data, underage_data_single, overage_data_single
 
 def load_cost_structure(alpha_input:np.array, underage_input:np.array, overage_input:np.array):
     """ Initialize the cost structure for the newsvendor problem"""
@@ -231,6 +256,8 @@ def load_cost_structure(alpha_input:np.array, underage_input:np.array, overage_i
     alpha = alpha_input
     underage = underage_input
     overage = overage_input
+
+######################### Newsvendor related Functions ####################################################################
 
 def nvps_profit(demand:np.array, q:np.array):
     """ Profit function of the newsvendor under substitution
@@ -340,6 +367,8 @@ def solve_MILP(d:np.array, n_threads:int=40):
     else:
         raise Exception('Optimization was not successful.')
     return orders, model.status
+
+############################################# Separated Approaches ########################################################
 
 def solve_complex_parametric_seperate(y_train:np.array, y_train_pred:np.array, y_test_pred:np.array, scenario_size:int=100, n_threads:int=40):
     """Solve the complex newsvendor problem in a parametric way.
@@ -572,124 +601,6 @@ def solve_basic_non_parametric_seperate(y_train:np.array, y_train_pred:np.array,
         final_order_quantities_non_parametric.append(final_allocation_np)
 
     return final_order_quantities_non_parametric
-
-############################### ETS Functions ###########################################################################
-        
-def ets_forecast(y_train:np.array, y_val:np.array, y_test_length:int, verbose:int=0, fit_past:int = 12*7):
-    """Forecast the demand using the ETS model
-
-    Parameters
-    ----------
-    y_train : Demand data for training, shape (T, N_PRODUCTS)
-    y_val : Demand data for validation, shape (T, N_PRODUCTS)
-    y_test_length : Number of samples in the test set
-    verbose : Verbosity level
-    fit_past : Number of samples in the demand distribution estimate
-
-    Returns
-    ----------
-    results_dct : dict
-        Dictionary containing the results for each product
-    """
-    N_PRODUCTS = y_train.shape[1] # number of products
-    N_TRAIN = y_train.shape[0] # number of training samples
-    N_VAL = y_val.shape[0] # number of validation samples
-    N_TEST = y_test_length # number of test samples
-
-    # build all possible model configs
-    error_types = ['add', 'mul']
-    trend_types = ['add', 'mul', None]
-    damped_trend_types = [True, False]
-    seasonal_types = ['add', 'mul', None]
-    seasonal_periods = [None, 7, 12, 24, 31]  
-    model_configs = list(itertools.product(error_types, trend_types, damped_trend_types, seasonal_types, seasonal_periods))
-
-    fit_past = fit_past # training data size (and number of samples in demand distribution estimate)
-    timesteps = 1 # number of predictions timesteps (for our application, one-day-ahead predictions)
-    
-    # initialize variables to store the best configuration and its results
-    best_config, best_rmse, best_mape, best_message = None, np.inf, np.inf, None
-    best_rmse = np.inf
-    results_dct = {}
-
-    # loop over products
-    for i in range(N_PRODUCTS):
-        start_i = datetime.datetime.now() # computation start for product i
-        results_dct[i] = {} # initialize result dict for product i
-        target = np.append(y_train[:,i], y_val[:, i]) # train and val targets for i
-        
-        # loop through configurations
-        for index, config in enumerate(model_configs, 1):
-            preds = np.array([]) # variable in which validation set predictions are stored
-            try:
-                # loop through validation timesteps, fit and predict on-day-ahead
-                for t in range(0, N_VAL, timesteps):
-                    model = ETSModel(target[N_TRAIN+t-fit_past:N_TRAIN+t], *config)
-                    model = model.fit()
-                    preds = np.append(preds, np.maximum(0, model.forecast(timesteps)))
-
-                # after evaluation is completed, compute RMSE and MAPE on validation set
-                target_val = target[N_TRAIN:N_TRAIN+N_VAL]
-                # Ensure preds and target_val have the same shape
-                assert preds.shape == target_val.shape, "preds and target_val must have the same shape"
-
-                rmse = np.sqrt( np.mean( (preds-target_val)**2 ) )
-                mape = np.mean( abs(preds[target_val>0]-target_val[target_val>0]) / target_val[target_val>0] )
-
-                message = 'success'
-            except Exception as e:
-                rmse, mape = np.inf, np.inf
-                message = e
-                print('Exeption \n', e)
-
-            # If the RMSE is lower than the best RMSE so far, update the best configuration and its results
-            if rmse < best_rmse:
-                best_config = config
-                best_rmse = rmse
-                best_mape = mape
-                best_message = message
-
-        # fit the best model on the whole training set and predict for the test set
-        model = ETSModel(target, *best_config)
-        model = model.fit()
-        best_test_pred = model.forecast(N_TEST)
-        
-        results_dct[i] = (best_config, best_rmse, best_mape, best_test_pred, best_message) # save results for product "i" and configuration "config
-
-    return results_dct
-
-def ets_evaluate(y_test:np.array, results_dct:dict):
-    """Evaluate the ETS model
-
-    Parameters
-    ----------
-    y_test : Demand data for testing, shape (T, N_PRODUCTS)
-    results_dct : Dictionary containing the results for each product
-    underage : Underage costs, shape (1, N_PRODUCTS)
-
-    Returns
-    ----------
-    profit_ets_single : float
-        Profit for the single product case
-    profit_ets_multi : float
-        Profit for the multi-product case
-    """
-    global alpha, underage, overage
-    N_PRODUCTS = y_test.shape[1] # number of products
-    N_TEST = y_test.shape[0] # number of test samples
-
-    test_pred = np.zeros((N_TEST, N_PRODUCTS))  # Assuming N_TEST is the number of test samples
-    
-    for i in range(N_PRODUCTS):
-        test_pred[:, i] = results_dct[i][3]
-
-    y_test_single = y_test[:,0].reshape(-1, 1)
-    test_pred_single = test_pred[:,0].reshape(-1, 1)
-
-    profit_ets_single = np.mean(nvps_profit(y_test_single, test_pred_single ))
-    profit_ets_multi = np.mean(nvps_profit(y_test, test_pred))
-
-    return  profit_ets_single, profit_ets_multi
 
 ######################### Neural Network Functions ######################################################################
 
@@ -1189,8 +1100,6 @@ def ioa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.
     # Save the model, hyperparameters, profit, time and memory usage
     save_model(model=model_ANN_simple, hyperparameter=hyperparameter, profit=profit_simple_ANN_IOA, elapsed=elapsed, peak_memory=peak_memory, avg_memory=avg_memory, dataset_id=dataset_id, path=path, name='ANN_simple_IOA')
 
-
-
 def soa_ann_simple(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np.array, X_test:np.array, y_test:np.array, 
                    underage_data_single:np.array, overage_data_single:np.array, trials:int, dataset_id:str, path:str):
     """ Train and evaluate the seperate optimization approach with a simple ANN model and saves model, hyperparameters and profit
@@ -1581,49 +1490,6 @@ def soa_xgb_complex(X_train:np.array, y_train:np.array, X_val:np.array, y_val:np
     save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit=profit_scp_XGB, elapsed=elapsed_scp, peak_memory=peak_memory_scp, avg_memory=avg_memory_scp, dataset_id=dataset_id, path=path, name='XGB_complex_SOAp')
     save_model(model=xgb_model, hyperparameter=hyperparameter_XGB_SOA_Complex, profit=profit_scnp_XGB, elapsed=elapsed_scnp, peak_memory=peak_memory_scnp, avg_memory=avg_memory_scnp, dataset_id=dataset_id, path=path, name='XGB_complex_SOAnp')
 
-def ets_baseline(y_train, y_val, y_test, underage_data, overage_data, alpha_data, fit_past, dataset_id, path):
-    """ Train and evaluate the ETS model and saves model, hyperparameters and profit
-    
-    Parameters
-    ----------
-    y_train : training feature data
-    y_val : validation feature data
-    y_test : testing feature data
-    underage_data : underage costs
-    overage_data : overage costs
-    alpha_data : substitution rates
-    fit_past : number of past periods to fit
-    dataset_id : dataset identifier
-    path : path to save the model
-    """
-    # Initialize for measurement of memory usage and elapsed time
-    monitor = MemoryMonitor(interval=1)  # monitor every second
-    monitor.start()
-    start = datetime.datetime.now()
-
-    # ETS Forecasting:
-    load_cost_structure(alpha_input=alpha_data, underage_input=underage_data, overage_input=overage_data) # Initialize the cost structure
-    # Search the best ETS model and forecast the test set
-    results_dct = ets_forecast(y_train=y_train, y_val=y_val, y_test_length=y_test.shape[0], fit_past=fit_past)
-    # Evaluate the results of the ETS model
-    profit_single_ets, profit_multi_ets = ets_evaluate(y_test=y_test, results_dct=results_dct)
-
-    # Measure memory usage and elapsed time
-    monitor.stop() # stop the average memory monitor
-    avg_memory = monitor.average_memory_usage() # read the average memory monitor
-    peak_memory = monitor.peak_memory_usage() # read the peak memory monitor
-    end = datetime.datetime.now() # stop the time monitor
-    elapsed = (end-start).total_seconds()
-    n_products = y_test.shape[1]
-    elapsed_single = elapsed/n_products
-    avg_memory_single = avg_memory/n_products
-    peak_memory_single = peak_memory/n_products
-
-    # Save the model, hyperparameters, profit, time and memory usage
-    save_model(model=results_dct, hyperparameter=None, profit=profit_single_ets, elapsed=elapsed_single, peak_memory=peak_memory_single, avg_memory=avg_memory_single, dataset_id=dataset_id, path=path, name='ETS_sinlge')
-    save_model(model=results_dct, hyperparameter=None, profit=profit_multi_ets, elapsed=elapsed, peak_memory=peak_memory, avg_memory=avg_memory, dataset_id=dataset_id, path=path, name='ETS_multi')
-
-
 def save_model(model, hyperparameter, profit, elapsed, peak_memory, avg_memory, dataset_id, path, name):
     """ Save the model, hyperparameters and profits in a pickle file
 
@@ -1665,42 +1531,8 @@ def save_model(model, hyperparameter, profit, elapsed, peak_memory, avg_memory, 
     with open(path_name_model, 'wb') as f:
         pickle.dump(data_model, f)
 
-############################################################## Data Generator ############################################################
-
-class HDF5DataGenerator(Sequence):
-    def __init__(self, file_path, X_dataset_name, y_dataset_name, batch_size=32, shuffle=True):
-        self.file_path = file_path
-        self.X_dataset_name = X_dataset_name
-        self.y_dataset_name = y_dataset_name
-        self.batch_size = batch_size
-        self.shuffle = shuffle
-        
-        with h5py.File(self.file_path, 'r') as f:
-            self.data_len = len(f[self.X_dataset_name])
-        self.indexes = np.arange(self.data_len)
-        self.on_epoch_end()
-
-    def __len__(self):
-        return int(np.floor(self.data_len / self.batch_size))
-
-    def __getitem__(self, index):
-        batch_indexes = self.indexes[index * self.batch_size:(index + 1) * self.batch_size]
-        X, y = self.__data_generation(batch_indexes)
-        return X, y
-
-    def on_epoch_end(self):
-        if self.shuffle:
-            np.random.shuffle(self.indexes)
-
-    def __data_generation(self, batch_indexes):
-        with h5py.File(self.file_path, 'r') as f:
-            X = f[self.X_dataset_name][batch_indexes]
-            y = f[self.y_dataset_name][batch_indexes]
-        return X, y
-
 
 ############################################################## Memory Monitoring ############################################################
-
 class MemoryMonitor:
     """ Class to monitor the memory usage of the current process on a separate thread """
     def __init__(self, interval=1):
