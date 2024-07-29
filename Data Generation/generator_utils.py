@@ -531,7 +531,7 @@ if __name__ == "__main__":
     # Create data for different sizes (10 - 1.000.000)
     for i in range(7):
         
-        dataset_dict = generate_data(data_size=(10**4), feature_size=3, feature_use=False, target_size=6, volatility=(0.05), heterogenity=0, path=save_path)
+        dataset_dict = generate_data(data_size=(10**4), feature_size=3, feature_use=False, target_size=6, volatility=(0.2), heterogenity=0, path=save_path)
         dataset_list.append(dataset_dict)
 
 
