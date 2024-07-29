@@ -10,7 +10,8 @@ def load_packages():
     install('numpy')
     install('scipy')
     install('scikit-learn')
-
+    install('h5py')
+  
 load_packages()
 
 import numpy as np
@@ -509,7 +510,6 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
         f.create_dataset('X_test', data=X_test)
         f.create_dataset('y_test', data=y_test)
     
-    # pickle dataset
     return {'dataset_id': dataset_id, 'dataset_path': file_path, 'folder_path': final_path}
 
 

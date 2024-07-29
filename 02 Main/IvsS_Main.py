@@ -34,10 +34,8 @@ from IvsS_Utils import soa_ann_complex, soa_ann_simple, soa_xgb_complex, soa_xgb
 
 ####################################### Functions ##############################################################################
 
-def main(dataset_id, risk_factor):
+def main(dataset_id, risk_factor, path):
 
-    # Path to the dataset
-    path =  "/pfs/work7/workspace/scratch/ma_elanza-thesislanza/"
     # Number of trials for the hyperparameter optimization
     trials = 100
     
@@ -127,6 +125,9 @@ def run(path, trials, dataset_id, save_path, risk_factor=1):
 
 if __name__ == "__main__":
     import sys
+
+    # Path to the dataset
+    path =  "/pfs/work7/workspace/scratch/ma_elanza-thesislanza/"
 
     # Check if the dataset_id is passed to the script
     if len(sys.argv) > 1:
