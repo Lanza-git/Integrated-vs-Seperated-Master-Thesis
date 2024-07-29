@@ -1,3 +1,53 @@
+"""
+IvsS_Utils.py
+======================
+This module contains utility functions for the Integrated vs. Separated approach for the newsvendor problem.
+
+General Functions:
+------------------
+- create_environment(): Define the location for the Gurobi license file.
+- load_dict(path:str): Load a dictionary from a file.
+- load_generated_data(path:str, multi:bool=True): Load the generated data for the newsvendor problem from specified location.
+- get_constants(risk_factor): Price information for the newsvendor problem.
+- load_cost_structure(alpha_input:np.array, underage_input:np.array, overage_input:np.array): Initialize the cost structure for the newsvendor problem.
+- nvps_profit(demand:np.array, q:np.array): Profit function of the newsvendor under substitution.
+- solve_MILP(d:np.array, n_threads:int=40): Solve the mixed-integer linear program (MILP) of the multi-product newsvendor problem under substitution.
+
+Separated Approach Functions:
+------------------------------
+- solve_complex_parametric_seperate(y_train:np.array,...): Solve the complex newsvendor problem in a parametric way
+- solve_complex_non_parametric_seperate(y_train:np.array,...): Solve the complex newsvendor problem in a non-parametric way
+- solve_basic_parametric_seperate(y_train:np.array,...): Solve the basic newsvendor problem in a parametric way
+- solve_basic_non_parametric_seperate(y_train:np.array,...): Solve the basic newsvendor problem in a non-parametric way
+
+Neural Network Functions:
+-------------------------
+- make_nvps_loss(): Create a custom loss function for the newsvendor problem under substitution
+- make_nvp_loss(): Create a custom loss function for the newsvendor problem without substitution
+- create_NN_model(n_hidden:int, n_neurons:int, ...): Build a neural network model with the specified architecture and hyperparameters
+- tune_NN_model_optuna(X_train:np.array, ...): Tune a neural network model on the given training data with early stopping using Optuna
+- train_NN_model(X_train:np.array, y_train:np.array, ...): Train a neural network model on the given training data with given hyperparameters
+
+XGBoost Functions:
+------------------
+- gradient(predt:np.array, dtrain:np.array): Calculate the gradient of the loss function for the newsvendor problem
+- hessian(predt:np.array, dtrain:np.array): Calculate the hessian of the loss function for the newsvendor problem
+- custom_loss(predt:np.array, dtrain:np.array): Handler for the XGBoost objective function (complex newsvendor problem)
+- tune_XGBoost_model(X_train:np.array, ...): Tune an XGBoost model on the given training data with early stopping using Optuna
+- train_XGBoost_model(X_train:np.array, y_train:np.array, ...): Train an XGBoost model on the given training data with given hyperparameters
+
+Handlers for Integrated and Separated Approaches:
+-------------------------------------------------
+- ioa_ann_simple(X_train:np.array, y_train:np.array, ...): Integrated Approach using ANN on the simple newsvendor problem
+- soa_ann_simple(X_train:np.array, y_train:np.array, ...): Separated Approach using ANN on the simple newsvendor problem
+- ioa_xgb_simple(X_train:np.array, y_train:np.array, ...): Integrated Approach using XGBoost on the simple newsvendor problem
+- soa_xgb_simple(X_train:np.array, y_train:np.array, ...): Separated Approach using XGBoost on the simple newsvendor problem
+- ioa_ann_complex(X_train:np.array, y_train:np.array, ...): Integrated Approach using ANN on the complex newsvendor problem
+- soa_ann_complex(X_train:np.array, y_train:np.array, ...): Separated Approach using ANN on the complex newsvendor problem
+- ioa_xgb_complex(X_train:np.array, y_train:np.array, ...): Integrated Approach using XGBoost on the complex newsvendor problem
+- soa_xgb_complex(X_train:np.array, y_train:np.array, ...): Separated Approach using XGBoost on the complex newsvendor problem
+"""
+
 # Standard library imports
 import os
 import pickle
@@ -100,103 +150,6 @@ def load_generated_data(path:str, multi:bool=True):
         y_train = y_train[:,0]
         y_val = y_val[:,0]
         y_test = y_test[:,0]
-
-    return X_train, y_train, X_val, y_val, X_test, y_test
-
-def preprocess_data(raw_data:pd.DataFrame):
-    """ Preprocess the data for the newsvendor problem
-    
-    Parameters
-    ---------
-    raw_data : raw data
-
-    Returns
-    ---------
-    feature_data: pd.dataframe
-        data with only features
-    target_data: pd.dataframe
-        data with only target
-    """
-
-    # Split the data into feature and target data
-    feature_columns = raw_data.columns[raw_data.columns.str.contains('demand') == False]
-    feature_data = raw_data[feature_columns]
-    target_columns = raw_data.columns[raw_data.columns.str.contains('demand')]
-    target_data = raw_data[target_columns]
-
-    # Define preprocessing for numeric columns (scale them)
-    numeric_features = feature_data.select_dtypes(include=[np.number]).columns.tolist()
-    numeric_transformer = Pipeline(steps=[
-        ('imputer', SimpleImputer(strategy='median')),
-        ('scaler', StandardScaler())])
-
-    # Define preprocessing for categorical features (encode them)
-    categorical_features = feature_data.select_dtypes(exclude=[np.number]).columns.tolist()
-    categorical_transformer = Pipeline(steps=[
-        ('imputer', SimpleImputer(strategy='constant', fill_value='missing')),
-        ('onehot', OneHotEncoder(handle_unknown='ignore'))])
-
-    # Combine preprocessing steps
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ('num', numeric_transformer, numeric_features),
-            ('cat', categorical_transformer, categorical_features)],
-        remainder='passthrough')
-
-    # Preprocessing on  data
-    feature_data = preprocessor.fit_transform(feature_data)
-
-    return feature_data, target_data
-
-def split_data(feature_data, target_data, test_size=0.2, val_size=0.2):
-    """ Split the data into training, validation and test sets
-
-    Parameters
-    ---------
-    feature_data : np.array
-        data with only features
-    target_data : np.array
-        data with only target
-    test_size : float
-        proportion of the dataset to include in the test split
-    val_size : float
-        proportion of the dataset to include in the validation split
-
-    Returns
-    ---------
-    X_train : np.array
-        training feature data
-    y_train : np.array
-        training target data
-    X_val : np.array
-        validation feature data
-    y_val : np.array
-        validation target data
-    X_test : np.array
-        test feature data
-    y_test : np.array
-        test target data
-    """
-    # First, split the data into training+validation set and test set
-    X_train_val, X_test, y_train_val, y_test = train_test_split(feature_data, target_data, test_size=test_size, random_state=42)
-
-    # Then, split the training+validation set into training set and validation set
-    val_size_adjusted = val_size / (1 - test_size)  # Adjust the validation size
-    X_train, X_val, y_train, y_val = train_test_split(X_train_val, y_train_val, test_size=val_size_adjusted, random_state=42)
-
-    # Convert to numpy arrays if they are pandas DataFrames
-    if isinstance(X_train, pd.DataFrame):
-        X_train = X_train.values
-    if isinstance(X_val, pd.DataFrame):
-        X_val = X_val.values
-    if isinstance(X_test, pd.DataFrame):
-        X_test = X_test.values
-    if isinstance(y_train, pd.DataFrame) or isinstance(y_train, pd.Series):
-        y_train = y_train.values
-    if isinstance(y_val, pd.DataFrame) or isinstance(y_val, pd.Series):
-        y_val = y_val.values
-    if isinstance(y_test, pd.DataFrame) or isinstance(y_test, pd.Series):
-        y_test = y_test.values
 
     return X_train, y_train, X_val, y_val, X_test, y_test
 

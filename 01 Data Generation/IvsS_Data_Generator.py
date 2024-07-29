@@ -1,3 +1,38 @@
+"""
+IvsS_Data_Generator.py
+======================
+This script generates artificial datasets for the Integrated vs. Seperated Master Thesis.
+
+The script generates artificial datasets based on the following settings:
+- data_size: indicates size of datapoints (10^1, 10^2, ..., 10^6)
+- feature_size: indicates count of features (3, 6, 12, 24, ..., 384)
+- feature_use: indicates whether additional features give additional info about the target, or they are just noise
+- target_size: indicates count of the target values
+- volatility: scale between 0 and 1 that indicates the volatility
+- heterogenity: scale between 0 and 1 that indicates the heterogenity of the dataset
+
+The resulting datasets are saved in the specified path. 
+The dataset ID is created by concatenating the settings.
+
+Functions:
+----------
+- generate_data: Generate an artificial dataset based on the settings and saves it
+
+- load_packages: Load the required packages for the script
+- split_data: Split the data into training, validation and test sets
+- generate_phi: Set up the AutoRegressive coefficents (AR)
+- generate_theta: Set up the Moving Average coefficients (MA)
+- get_A_B: Set up the A and B matrices for the factor model
+- generate_sigma_U: Generate the covariance matrix for the innovations U
+- generate_innovations: Use NumPy to generate multivariate normal innovations
+- simulate_arma22: Simulation of a 3-dimensional ARMA(2,2) process
+- generate_demand: Generate demand based on the 3-dimensional ARMA process and the factor model
+- add_info_features: Add L additional dimensions to the dataset by creating L copies of each feature and adding Gaussian noise
+- add_noise_features: Add L additional dimensions to the dataset by creating L noise features with the same distribution as the original features
+- add_heterogenity: Add heterogenity to the dataset by multiplying a random subset of the data with a factor
+
+"""
+
 def load_packages():
     # General imports
     import subprocess
@@ -517,7 +552,7 @@ def generate_data(data_size:int, feature_size:int, feature_use:bool, target_size
 
 if __name__ == "__main__":
 
-    save_path = "/pfs/work7/workspace/scratch/ma_elanza-thesislanza" #"C:/Users/lanza/Master_Thesis_EL/Integrated-vs-Seperated-Master-Thesis/test"
+    save_path = "/pfs/work7/workspace/scratch/ma_elanza-thesislanza" #"C:/Users/lanza/Master_Thesis_EL/Integrated-vs-Seperated-Master-Thesis/04 Data"
 
     dataset_list = []
 

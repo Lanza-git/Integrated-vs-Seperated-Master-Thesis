@@ -1,3 +1,18 @@
+"""
+IvsS_Main.py
+======================
+This script is the main script for the IvsS experiments. It loads the data, runs the experiments and saves the results.
+
+Functions:
+----------
+- main(dataset_id, risk_factor, path): Main function that will initialize the experiments.
+- run(path, trials, dataset_id, save_path, risk_factor=1): handler function that loads the datastarts each approach sequentially to ensure 
+        comparable results regarding computational ressources.
+- load_packages(): Load the necessary packages for the experiments.
+
+"""
+
+
 # Load packages
 def load_packages():
     # General imports
