@@ -709,18 +709,9 @@ def tune_NN_model_optuna(X_train:np.array, y_train:np.array, X_val:np.array, y_v
         else:
             raise ValueError('Invalid Configuration')
         
-        # Create the generators
-        #train_generator = HDF5DataGenerator(file_path, 'X_train', 'y_train', batch_size=batch_size)
-        #val_generator = HDF5DataGenerator(file_path, 'X_val', 'y_val', batch_size=batch_size)
-        
         #pruning_callback = KerasPruningCallback(trial, 'val_loss')
         model_ANN.fit(X_train, y_train, validation_data=(X_val, y_val),  epochs=epochs, batch_size=batch_size, verbose=verbose, callbacks=[pruning_callback])
         
-        # Create another generator for prediction
-        #pred_generator = HDF5DataGenerator(file_path, 'X_val', 'y_val', batch_size=batch_size)
-
-        # Make predictions on validation set and compute profits
-        #q_val = model_ANN.predict_generator(pred_generator, steps=val_size//batch_size)
         q_val = model_ANN.predict(X_val)
 
         # If integrated, we can use the profit function, 
@@ -747,7 +738,7 @@ def tune_NN_model_optuna(X_train:np.array, y_train:np.array, X_val:np.array, y_v
 def train_NN_model(hp:list, X_train, y_train, X_val, y_val, integrated:bool, verbose:int=0):
     """ file_path:str, input_shape:int, output_shape:int,
     
-    Train a network on the given training data with early stopping.
+    Train a network on the given training data with given hyperparameters
     
     Parameters
     --------------

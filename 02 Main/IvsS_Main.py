@@ -84,21 +84,25 @@ def run(path, trials, dataset_id, save_path, risk_factor=1):
     y_val_single = y_val_single.reshape(y_val_single.shape[0],1)
     y_test_single = y_test_single.reshape(y_test_single.shape[0],1)
     
+    # Start the IOA utilizing ANN on the simple problem
     ioa_ann_simple(X_train=X_train_single, y_train=y_train_single, X_val=X_val_single, y_val=y_val_single, X_test=X_test_single, y_test=y_test_single, 
                 underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
     print("ioa_ann_simple done: ", dataset_id)
     gc.collect()
     
+    # Start the SOA utilizing ANN on the simple problem
     soa_ann_simple(X_train=X_train_single, y_train=y_train_single, X_val=X_val_single, y_val=y_val_single, X_test=X_test_single, y_test=y_test_single, 
                     underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
     print("soa_ann_simple done: ", dataset_id)
     gc.collect()
     
+    # Start the IOA utilizing XGB on the simple problem
     ioa_xgb_simple(X_train=X_train_single, y_train=y_train_single, X_val=X_val_single, y_val=y_val_single, X_test=X_test_single, y_test=y_test_single, 
                 underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
     print("ioa_xgb_simple done: ", dataset_id)
     gc.collect()
     
+    # Start the SOA utilizing XGB on the simple problem
     soa_xgb_simple(X_train=X_train_single, y_train=y_train_single, X_val=X_val_single, y_val=y_val_single, X_test=X_test_single, y_test=y_test_single, 
                 underage_data_single=underage_data_single, overage_data_single=overage_data_single, trials=trials, dataset_id=dataset_id, path=save_path)
     print("soa_xgb_simple done: ", dataset_id)
@@ -114,21 +118,25 @@ def run(path, trials, dataset_id, save_path, risk_factor=1):
     print("X train shape", X_train_multi.shape)
     print("y train shape", y_train_multi.shape)
 
+    # Start the IOA utilizing ANN on the complex problem
     ioa_ann_complex(X_train=X_train_multi, y_train=y_train_multi, X_val=X_val_multi, y_val=y_val_multi, X_test=X_test_multi, y_test=y_test_multi, 
                 alpha_data=alpha_data, underage_data=underage_data, overage_data=overage_data, trials=trials, dataset_id=dataset_id, path=save_path)
     print("ioa_ann_complex done: ", dataset_id)
     gc.collect()
     
+    # Start the SOA utilizing ANN on the complex problem
     soa_ann_complex(X_train=X_train_multi, y_train=y_train_multi, X_val=X_val_multi, y_val=y_val_multi, X_test=X_test_multi, y_test=y_test_multi,
                 alpha_data=alpha_data, underage_data=underage_data, overage_data=overage_data, trials=trials, dataset_id=dataset_id, path=save_path)
     print("soa_ann_complex done: ", dataset_id)
     gc.collect()
 
+    # Start the IOA utilizing XGB on the complex problem
     ioa_xgb_complex(X_train=X_train_multi, y_train=y_train_multi, X_val=X_val_multi, y_val=y_val_multi, X_test=X_test_multi, y_test=y_test_multi,
                 alpha_data=alpha_data, underage_data=underage_data, overage_data=overage_data, trials=trials, dataset_id=dataset_id, path=save_path)
     print("ioa_xgb_complex done: ", dataset_id)
     gc.collect()
     
+    # Start the SOA utilizing XGB on the complex problem
     soa_xgb_complex(X_train=X_train_multi, y_train=y_train_multi, X_val=X_val_multi, y_val=y_val_multi, X_test=X_test_multi, y_test=y_test_multi,
                 alpha_data=alpha_data, underage_data=underage_data, overage_data=overage_data, trials=trials, dataset_id=dataset_id, path=save_path)
     print("soa_xgb_complex done: ", dataset_id)
