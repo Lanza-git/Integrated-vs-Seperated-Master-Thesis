@@ -72,6 +72,8 @@ To use the files in Evaluaton & Visualization, the following packages are necess
 - numpy
 - h5py
 - scipy
+- seaborn
+- matplotlib
   
 ### Structure
 - IvsS_Evaluation.ipynb:          Evaluation notebook used to visualize the results of the trained models
