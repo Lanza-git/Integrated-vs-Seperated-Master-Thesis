@@ -22,7 +22,8 @@ The file "IvsS_Data_Generator.py" will automatically install the following packa
 The file can be executed on your local device using a python environment.
 To characteristics of the generated dataset can be defined within **IvsS_Data_Generator.py**, please refer to the file for additional information.
 
-The output of this code will be a dataset saved as a .h5 file, that is split up into: *X_train, y_train, X_val, y_val, X_test, y_test*.
+The code will generate a dataset with given parameters and saves it at a defined path.
+The dataset is saved as a .h5 file, that is split up into: *X_train, y_train, X_val, y_val, X_test, y_test*.
 The saving location of the file can be defined in **IvsS_Data_Generator.py**.
 The name of the file will look like *set_430650_data.h5*, where *set_430650* is an example for a dataset ID. The file will be saved in a folder named equal to the dataset ID.
 For the creation rules of the dataset ID please refer to the code.
